@@ -1,0 +1,29 @@
+mdp:
+  create:
+    - lamarckian.mdp.pong.MDP
+    - lamarckian.mdp.pong.wrap.unary()
+    - lamarckian.mdp.wrap.cast(0)
+  fps: 15
+  pbrs:
+    - score
+model:
+  backbone:
+    - lamarckian.mdp.gym.model.fc.Module
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share0
+train:
+  batch_size: 16
+  lr: 0.00025
+rl:
+  ac:
+    truncation: 50
+ec:
+  train:
+    stopper:
+      - lamarckian.stopper.cost.relative('ec.train.cost')
+    cost: 1m
+test:
+  mdp:
+    pong:
+      ball_init: mdp.random.choice([0, 1])

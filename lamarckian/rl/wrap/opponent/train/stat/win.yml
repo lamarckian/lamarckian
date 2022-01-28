@@ -1,0 +1,10 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.stat.win
+rl:
+  opponent:
+    train:
+      stat:
+        win:
+          sample: 200

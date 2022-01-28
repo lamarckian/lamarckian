@@ -1,0 +1,5 @@
+ec:
+  train:
+    stopper:
+      ${__extend__}:
+        - lamarckian.stopper.wrap.evaluate.train

@@ -1,0 +1,5 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  create:
+    - lamarckian.mdp.slimevolleygym.MDP2

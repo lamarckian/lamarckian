@@ -1,0 +1,13 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.multi_reward.choose
+      - lamarckian.rl.wrap.opponent.train.multi_reward.sync
+rl:
+  opponent:
+    train:
+      append: 10000
+      multi_reward:
+        stopper:
+          - lamarckian.stopper.episode.relative('rl.opponent.train.append')
+        prob: 0.8

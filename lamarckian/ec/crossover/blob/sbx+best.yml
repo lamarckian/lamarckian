@@ -1,0 +1,9 @@
+ec:
+  crossover:
+    blob:
+      create:
+        - lamarckian.ec.crossover.blob.sbx.Crossover
+        - lamarckian.ec.crossover.wrap.otherwise.best
+      prob: 0.1
+      sbx:
+        distribution_index: 20

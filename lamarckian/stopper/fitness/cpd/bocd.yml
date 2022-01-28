@@ -1,0 +1,4 @@
+stopper:
+  bocd:
+    hazard: bocd.ConstantHazard(300)
+    distribution: bocd.StudentT(mu=0, kappa=1, alpha=1, beta=1)

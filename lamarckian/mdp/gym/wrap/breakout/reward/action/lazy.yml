@@ -1,0 +1,8 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.breakout.reward.action.lazy
+  gym:
+    breakout:
+      reward:
+        lazy: 0.01

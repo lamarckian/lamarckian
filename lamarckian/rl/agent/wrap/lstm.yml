@@ -1,0 +1,5 @@
+rl:
+  agent:
+    wrap:
+      ${__extend__}:
+        - lamarckian.rl.agent.wrap.lstm

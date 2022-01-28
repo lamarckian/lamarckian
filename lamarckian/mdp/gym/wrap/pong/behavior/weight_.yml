@@ -1,0 +1,8 @@
+mdp:
+  gym:
+    pong:
+      reward:
+        weight:
+          score: [0, 1]
+          busy: [0, 0.01]
+          lazy: [0, 0.01]

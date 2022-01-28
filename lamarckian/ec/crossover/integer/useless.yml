@@ -1,0 +1,5 @@
+ec:
+  crossover:
+    integer:
+      create:
+        - lamarckian.ec.crossover.Useless

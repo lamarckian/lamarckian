@@ -1,0 +1,4 @@
+stopper:
+  skip:
+    iteration: 300
+    duration: 10m

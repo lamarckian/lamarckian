@@ -1,0 +1,4 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.wrap.objective.fitness

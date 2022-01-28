@@ -1,0 +1,11 @@
+ec:
+  create:
+    ${__extend__}:
+      - lamarckian.ec.wrap.mdp.opponent.strict()
+rl:
+  opponent:
+    eval:
+      stopper:
+        - lamarckian.stopper.iteration.repeat_last('rl.opponent.eval.repeat_last')
+      repeat_last:
+        - 5

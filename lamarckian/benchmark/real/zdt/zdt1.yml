@@ -1,0 +1,5 @@
+extend:
+  - ${os.getcwd()}.yml
+evaluator:
+  create:
+    - lamarckian.benchmark.real.zdt.ZDT1

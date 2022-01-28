@@ -1,0 +1,5 @@
+mdp:
+  gfootball:
+    wrapper:
+      ${__extend__}:
+        - lamarckian.mdp.gfootball.wrapper.SkipWrapper(env)

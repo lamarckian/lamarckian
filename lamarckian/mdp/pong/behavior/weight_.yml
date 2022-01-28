@@ -1,0 +1,6 @@
+mdp:
+  pong:
+    reward:
+      weight:
+        busy: [0, 0.0001]
+        lazy: [0, 0.0001]

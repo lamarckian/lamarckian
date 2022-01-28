@@ -1,0 +1,15 @@
+extend:
+  - stopper/cost.yml
+stopper:
+  cost: 100000
+ec:
+  crossover:
+    blob:
+      create:
+        - lamarckian.ec.crossover.blob.single_point.SplitLayerAny
+  mutation:
+    blob:
+      create:
+        - lamarckian.ec.mutation.blob.Gaussian
+        - lamarckian.ec.mutation.wrap.get_prob
+        - lamarckian.ec.mutation.wrap.otherwise.identical

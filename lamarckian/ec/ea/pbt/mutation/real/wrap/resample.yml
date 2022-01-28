@@ -1,0 +1,7 @@
+ec:
+  mutation:
+    real:
+      create:
+        ${__extend__}:
+          - lamarckian.ec.ea.pbt.explore.real.wrap.resample
+      resample: 0.01

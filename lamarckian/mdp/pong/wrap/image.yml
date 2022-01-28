@@ -1,0 +1,16 @@
+extend:
+  - ../../pong.yml
+mdp:
+  create:
+    - lamarckian.mdp.pong.MDP
+    - lamarckian.mdp.wrap.image.color.grey_hwc(0)
+    - lamarckian.mdp.wrap.image.crop(0, 34, -16, 16, -16)
+    - lamarckian.mdp.wrap.image.downsample(0, 2, 2)
+    - lamarckian.mdp.wrap.image.resize(0, 40, 32)
+    - lamarckian.mdp.wrap.cast(0)
+    - lamarckian.mdp.wrap.image.color.scale(0, 64, 255)
+    - lamarckian.mdp.wrap.expand_dims(0, 0)
+    - lamarckian.mdp.wrap.image.stack_chw(0, 4)
+model:
+  backbone:
+    - lamarckian.mdp.gym.model.conv.Module

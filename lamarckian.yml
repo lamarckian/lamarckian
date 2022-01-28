@@ -1,0 +1,212 @@
+extend:
+  - lamarckian.test.yml
+root: ~/model/lamarckian
+sample:
+  train: 300
+  eval: 60
+ray:
+  local_mode: 0
+  # include_dashboard: 1
+  # dashboard_host: 0.0.0.0
+mdp:
+  create:
+    - lamarckian.mdp.pong.MDP
+    - lamarckian.mdp.pong.wrap.unary()
+    - lamarckian.mdp.wrap.cast(0)
+  fps: 15
+  debug:
+    feature2:
+      annot: true
+      fmt: .1f
+  pbrs:
+    - score
+model:
+  backbone:
+    - lamarckian.model.fc.Module
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share0
+  group:
+    - lamarckian.model.group.rsplit(1)
+  keep: 5
+train:
+  optimizer: torch.optim.Adam(params, lr, betas=(0.9, 0.999), eps=1e-8)
+  lr: 0.002
+  batch_size: 8192
+  clip_grad_norm: 0
+rl:
+  discount: 0.99
+  agent:
+    wrap: []
+  # threads: 1
+  # parallel: 1
+  ray:
+    num_cpus: 0
+    num_gpus: 0
+  swap: 0.5
+  pg:
+    prob_min: 0
+    # (reward / 5000).clip(-100, 100)
+    # (reward - reward.mean()) / (reward.std() + 1)
+    # (reward - reward.mean()) / (reward.std() + np.finfo(np.float32).eps)
+    # (reward - reward.mean()) / reward.std().clip(1)
+    # norm_reward: reward
+  ac:
+    norm_advantage: (advantage - advantage.mean()) / max(np.finfo(np.float32).eps, advantage.std())
+    # l1_loss
+    # mse_loss
+    # smooth_l1_loss
+    loss_critic: mse_loss
+    weight_loss:
+      policy: 1
+      critic: 0.5
+      entropy: 0.01
+    gae: 0.95
+    agent:
+      train:
+        wrap: []
+      eval:
+        wrap: []
+    truncation: 50
+  ppo:
+    clip: 0.2
+    reuse: 1
+    prefetch: 1
+  dqn:
+    capacity: 1m
+    epsilon: 0.05
+    # epsilon_next: max(epsilon - 0.001, 0.05)
+    update: 5
+evaluator:
+  create:
+    - lamarckian.rl.disc.Evaluator
+  wrap:
+    - lamarckian.evaluator.wrap.fix_ray
+  ray:
+    num_cpus: 1
+#  parallel: 1
+#  group: 0
+#  progress: 0
+ddp:
+  env:
+    NCCL_BLOCKING_WAIT: 1
+ec:
+  # parallel: 1
+  create:
+    - lamarckian.ec.ea.nsga_ii.NSGA_II_
+  ea:
+    nsga_ii:
+      density: individual['crowding_distance']
+  crossover:
+    blob:
+      create:
+        - lamarckian.ec.crossover.Best
+    real:
+      sbx:
+        distribution_index: 20
+      create:
+        - lamarckian.ec.crossover.real.sbx.Crossover
+      prob: 1
+    integer:
+      create:
+        - lamarckian.ec.crossover.integer.single_point.Crossover
+      prob: 1
+  mutation:
+    blob:
+      create:
+        - lamarckian.ec.mutation.Useless
+      prob: 0.01
+      gaussian: 0.005
+    real:
+      pm:
+        distribution_index: 20
+      create:
+        - lamarckian.ec.mutation.real.pm.Mutation
+      prob: 0.01
+    integer:
+      create:
+        - lamarckian.ec.mutation.integer.bitwise.Mutation
+      prob: 0.01
+  population: 30
+  train:
+    stopper:
+      - lamarckian.stopper.cost.relative('ec.train.cost')
+    record: 0
+    inspect: 0
+    detect: 0
+    cost: 1m
+  behavior: []
+tournament:
+  competitors: 2
+  compare: individual['result']['fitness']
+stopper:
+  skip:
+    iteration: 300
+    duration: 10m
+  patience: 5
+  record: 0
+pareto:
+  dominate: dominate_max(individual1['result']['objective'], individual2['result']['objective'])
+record:
+  scalar:
+    interval: 10
+  scalars:
+    interval: 10
+  vector:
+    interval: 10
+  histogram:
+    interval: 5m
+  evaluate:
+    interval: 30m
+  embedding:
+    interval: 5m
+  distribution:
+    interval: 5m
+  model:
+    interval: 5m
+  plot:
+    interval: 5m
+  freq:
+    interval: 30m
+    first: 1
+  save:
+    interval: 10m
+  memory:
+    interval: 1m
+recorder:
+  evaluator: 1
+  capacity: 2000
+  timeout: 10s
+  reset: 10
+  backup:
+    - lamarckian
+  env:
+    CUDA_VISIBLE_DEVICES: -1
+rpc:
+  # zmq nnpy pynng
+  backend: zmq
+  # pickle pickle_lz4 msgpack msgpack_lz4 pyarrow pyarrow_lz4
+  serializer: msgpack_lz4
+  # shm: 0
+profile:
+  net_io:
+    - bytes_sent
+    - bytes_recv
+    - packets_sent
+    - packets_recv
+    - dropin
+    - dropout
+logging:
+  version: 1
+  formatters:
+    simple:
+      format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: INFO
+      formatter: simple
+      stream: ext://sys.stderr
+  root:
+    level: INFO
+    handlers: [ console ]

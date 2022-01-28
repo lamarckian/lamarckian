@@ -1,0 +1,70 @@
+seed: 0
+ray:
+  local_mode: 1
+sample:
+  train: 3
+  eval: 2
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.wrap.debug.seed_env
+#      - lamarckian.mdp.wrap.debug.seed_torch.reset
+#      - lamarckian.mdp.wrap.debug.seed_torch.cast
+  length: 100
+model:
+  backbone:
+    ${__extend__}:
+      - lamarckian.model.wrap.seed
+train:
+  batch_size: 16
+evaluator:
+  parallel: 1
+rl:
+  opponent:
+    train:
+      pool:
+        capacity: 5
+        watch_dir:
+          interval: 0
+    eval:
+      repeat_last:
+        - 0
+  es:
+    sample: 1
+ec:
+  parallel: 1
+  population: 4
+  train:
+    cost: 1
+stopper:
+  minimal:
+    cost: 0
+    iteration: 0
+    duration: 0s
+  maximal:
+    cost: 0
+    iteration: 0
+    duration: 5s
+  skip:
+    cost: 0
+    iteration: 0
+    duration: 1s
+  patience: 0
+recorder:
+  reset: 2
+  backup: []
+record:
+  save:
+    first: 1
+  histogram:
+    interval: 0
+    first: 1
+  model:
+    interval: 0
+    first: 1
+  plot:
+    interval: 0
+    first: 1
+  evaluate:
+    first: 1
+    save: 0

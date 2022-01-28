@@ -1,0 +1,7 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.pong.wrap.reward.velocity.lazy
+  pong:
+    reward:
+      lazy: 0.001

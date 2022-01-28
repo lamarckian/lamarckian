@@ -1,0 +1,13 @@
+rl:
+  opponent:
+    train:
+      multi_reward:
+        weight:
+          env:
+            reward.env: 1
+          busy:
+            reward.env: 1
+            reward.busy: ${mdp.pong.reward.weight.busy}
+          lazy:
+            reward.env: 1
+            reward.lazy: ${mdp.pong.reward.weight.lazy}

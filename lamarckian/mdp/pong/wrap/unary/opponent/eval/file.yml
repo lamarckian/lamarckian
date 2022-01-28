@@ -1,0 +1,4 @@
+rl:
+  opponent:
+    eval:
+      file: ~/model/opponent/pong/unary

@@ -1,0 +1,4 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.evaluator.wrap.nonstop

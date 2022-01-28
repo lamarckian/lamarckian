@@ -1,0 +1,4 @@
+ec:
+  mating:
+    ${__extend__}:
+      - lamarckian.ec.mating.wrap.best_blob

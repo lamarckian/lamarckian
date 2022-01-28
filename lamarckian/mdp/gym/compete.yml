@@ -1,0 +1,7 @@
+mdp:
+  gym:
+    env: run-to-goal-ants-v0
+    import:
+      - gym_compete
+  create:
+    - lamarckian.mdp.gym.MA

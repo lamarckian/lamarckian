@@ -1,0 +1,17 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  gym:
+    env: Pendulum-v0
+model:
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.full2
+rl:
+  discount: 0.9
+  pg:
+    norm_reward: (reward + 8.1) / 8.1
+  ac:
+    truncation: 32
+    norm_advantage: advantage
+    gae: 1

@@ -1,0 +1,5 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gfootball.wrap.skip
+  skip: [3, 6]

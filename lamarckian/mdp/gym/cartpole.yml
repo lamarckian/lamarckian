@@ -1,0 +1,8 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  gym:
+    env: CartPole-v0
+rl:
+  ac:
+    truncation: 200

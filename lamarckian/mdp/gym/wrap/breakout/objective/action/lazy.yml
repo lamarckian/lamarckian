@@ -1,0 +1,9 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.breakout.objective.action.lazy
+  gym:
+    breakout:
+      objective:
+        lazy:
+          weight: [1, 1]

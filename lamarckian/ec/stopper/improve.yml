@@ -1,0 +1,9 @@
+ec:
+  train:
+    stopper:
+      - lamarckian.stopper.fitness.Improve
+      - lamarckian.stopper.wrap.patience()
+      - lamarckian.stopper.wrap.fitness.smooth()
+      - lamarckian.stopper.wrap.maximal.cost('ec.train.cost')
+stopper:
+  patience: 5

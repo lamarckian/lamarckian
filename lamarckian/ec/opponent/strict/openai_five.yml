@@ -1,0 +1,6 @@
+extend:
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/ensure.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/pool/append.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/choose/openai_five.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/trigger.yml
+  - ${ROOT}/lamarckian/ec/wrap/mdp/opponent/strict.yml

@@ -1,0 +1,9 @@
+mdp:
+  gfootball:
+    override:
+      gfootball.env.wrappers.Simple115StateWrapper: lamarckian.mdp.gfootball.wrapper.state.raw_beast.State
+model:
+  backbone:
+    - lamarckian.mdp.gfootball.model.raw_beast.ZModel
+  critic:
+    wrap: []

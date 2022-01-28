@@ -1,0 +1,9 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.pong.objective.velocity.busy
+  gym:
+    pong:
+      objective:
+        busy:
+          weight: [1, 1]

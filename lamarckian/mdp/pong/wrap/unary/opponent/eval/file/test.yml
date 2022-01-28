@@ -1,0 +1,5 @@
+extend:
+  - ${os.getcwd()}.yml
+test_read:
+  ${__extend__}:
+    - ${os.getcwd()}/train.yml

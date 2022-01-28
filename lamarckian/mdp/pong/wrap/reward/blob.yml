@@ -1,0 +1,21 @@
+mdp:
+  pong:
+    reward:
+      model:
+        - lamarckian.mdp.gym.model.reward.Module
+ec:
+  crossover:
+    reward_blob:
+      create:
+        - lamarckian.ec.crossover.blob.sbx.Crossover
+      prob: 1
+      sbx:
+        distribution_index: 20
+  mutation:
+    reward_blob:
+      create:
+        - lamarckian.ec.mutation.blob.Gaussian
+        - lamarckian.ec.mutation.wrap.get_prob
+        - lamarckian.ec.mutation.wrap.otherwise.identical
+      prob: ${mutation.blob.prob}
+      gaussian: ${mutation.blob.gaussian}

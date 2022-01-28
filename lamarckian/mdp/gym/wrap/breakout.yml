@@ -1,0 +1,13 @@
+mdp:
+  create:
+    - lamarckian.mdp.gym.MDP
+    - lamarckian.mdp.wrap.fitness.norm(0, 400)
+    - lamarckian.mdp.gym.wrap.breakout.rule.fire
+stopper:
+  cost: 1000000
+  duration: 5h
+train:
+  batch_size: 1
+rl:
+  ac:
+    truncation: 5

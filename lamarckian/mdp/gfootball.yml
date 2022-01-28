@@ -1,0 +1,84 @@
+extend:
+  - ${ROOT}/lamarckian/rl/agent/wrap/lstm.yml
+sample:
+  train: 300
+  eval: 30
+mdp:
+  create:
+    - lamarckian.mdp.gfootball.PvP
+    - lamarckian.mdp.gfootball.wrap.fault_tolerant
+  gfootball:
+    create:
+      # academy_corner
+      env_name: 11_vs_11_hard_stochastic
+      representation: simple115v2
+      # rewards: scoring,checkpoints
+    override:
+      gfootball.env.wrappers.Simple115StateWrapper: lamarckian.mdp.gfootball.wrapper.state.Simple115
+    reward:
+      score: 1
+    wrapper: []
+    render:
+      rgb: 1
+      subtitle: 1
+    deterministic: -1
+  fps: 15
+  debug:
+    interact:
+      shortcut:
+        - esc
+        - left
+        - up+left
+        - up
+        - up+right
+        - right
+        - down+right
+        - down
+        - down+left
+        - 1  # long pass
+        - 2  # high pass
+        - 3  # short pass
+        - space  # shot
+        - 7  # sprint
+        - backspace  # release direction
+        - 8  # release sprint
+        - tab  # sliding
+        - 0  # dribble
+        - 9  # release dribble
+  pbrs:
+    - score
+model:
+  backbone:
+    - lamarckian.mdp.gfootball.model.fc.Module
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.full2
+  lstm: 0
+train:
+  lr: 0.0005
+  batch_size: 32768
+rl:
+  discount: 0.993
+  ac:
+    weight_loss:
+      entropy: 0.01
+    truncation: 128
+  ppo:
+    clip: 0.3
+    reuse: 2
+ec:
+  train:
+    stopper:
+      - lamarckian.stopper.cost.relative('ec.train.cost')
+    cost: 5m
+stopper:
+  maximal:
+    cost: 50m
+record:
+  evaluate:
+    interval: 1h
+  rollout:
+    elite: result.win
+test_read:
+  ${__extend__}:
+    - ${os.path.splitext(PATH)[0]}.test.yml

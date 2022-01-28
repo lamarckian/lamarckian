@@ -1,0 +1,4 @@
+mdp:
+  gfootball:
+    override:
+      gfootball.env.wrappers.Simple115StateWrapper: lamarckian.mdp.gfootball.wrapper.state.Simple305

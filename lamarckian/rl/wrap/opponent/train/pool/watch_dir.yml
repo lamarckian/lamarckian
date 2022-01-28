@@ -1,0 +1,14 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.pool.watch_dir
+rl:
+  opponent:
+    train:
+      pool:
+        watch_dir:
+          stopper:
+            - lamarckian.stopper.time.relative('rl.opponent.train.maintain.watch_dir.interval')
+          interval: 5m
+          root: ~/model/opponent/watch_dir
+          spec: decision.blob

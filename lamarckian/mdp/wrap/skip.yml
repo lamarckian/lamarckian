@@ -1,0 +1,5 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.wrap.skip
+  skip: [3, 6]

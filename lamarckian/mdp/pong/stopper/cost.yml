@@ -1,0 +1,6 @@
+stopper:
+  cost: 1000000
+ea:
+  train:
+    stopper:
+      - lamarckian.stopper.cost.relative('stopper.cost')

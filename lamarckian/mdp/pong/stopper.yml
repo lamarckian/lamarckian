@@ -1,0 +1,11 @@
+stopper:
+  cost: 10000000
+mdp:
+  pong:
+    cost: 1000000000
+ea:
+  stopper:
+    - lamarckian.stopper.cost.absolute('mdp.pong.cost')
+evaluator:
+  stopper:
+    - lamarckian.stopper.cost.absolute('mdp.pong.cost')

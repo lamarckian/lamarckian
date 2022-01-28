@@ -1,0 +1,9 @@
+mdp:
+  create:
+    - lamarckian.mdp.slimevolleygym.MDP
+model:
+  backbone:
+    - lamarckian.model.fc.DNN2
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share0

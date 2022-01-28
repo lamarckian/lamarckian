@@ -1,0 +1,6 @@
+extend:
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/ensure.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/pool/flat.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/choose/random.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/trigger.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/util/eval.yml

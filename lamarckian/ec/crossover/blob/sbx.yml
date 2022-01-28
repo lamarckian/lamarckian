@@ -1,0 +1,8 @@
+ec:
+  crossover:
+    blob:
+      create:
+        - lamarckian.ec.crossover.blob.sbx.Crossover
+      prob: 1
+      sbx:
+        distribution_index: 20

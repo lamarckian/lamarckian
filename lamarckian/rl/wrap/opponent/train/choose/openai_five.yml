@@ -1,0 +1,9 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.choose.openai_five
+rl:
+  opponent:
+    train:
+      openai_five:
+        prob: 0.8

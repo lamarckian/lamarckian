@@ -1,0 +1,8 @@
+ec:
+  mutation:
+    real:
+      create:
+        - lamarckian.ec.mutation.real.pm.Mutation
+      prob: 1
+      pm:
+        distribution_index: 20

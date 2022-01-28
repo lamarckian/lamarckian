@@ -1,0 +1,15 @@
+stopper:
+  debug:
+    interval: 30m
+evaluator:
+  stopper:
+    ${__extend__}:
+      - lamarckian.stopper.wrap.fitness.debug.csv()
+ec:
+  stopper:
+    ${__extend__}:
+      - lamarckian.stopper.wrap.fitness.debug.csv()
+  train:
+    stopper:
+      ${__extend__}:
+        - lamarckian.stopper.wrap.fitness.debug.csv()

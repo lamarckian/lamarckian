@@ -1,0 +1,8 @@
+rl:
+  opponent:
+    train:
+      file: ~/model/opponent/pong/unary
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.file()

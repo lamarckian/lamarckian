@@ -1,0 +1,6 @@
+extend:
+  - ${os.getcwd()}.yml
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.eval.file()

@@ -1,0 +1,5 @@
+extend:
+  - ../trajectory/action.yml
+  - trajectory/ram/position.yml
+  - objective/action/lazy.yml
+  - objective/velocity/busy.yml

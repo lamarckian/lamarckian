@@ -1,0 +1,16 @@
+extend:
+  - ${os.path.dirname(PATH)}.yml
+mdp:
+  gfootball:
+    override:
+      gfootball.env.wrappers.Simple115StateWrapper: lamarckian.mdp.gfootball.wrapper.state.ResNet497StateWrapper
+model:
+  backbone:
+    - lamarckian.mdp.gfootball.model.conv.ResNet497
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share1
+train:
+  batch_size: 2048
+  ppo:
+    reuse: 1

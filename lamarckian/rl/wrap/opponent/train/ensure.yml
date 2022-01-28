@@ -1,0 +1,4 @@
+evaluator:
+  wrap:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.ensure

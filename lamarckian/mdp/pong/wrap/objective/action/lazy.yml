@@ -1,0 +1,8 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.pong.wrap.objective.action.lazy
+  pong:
+    objective:
+      lazy:
+        weight: [1, 1]

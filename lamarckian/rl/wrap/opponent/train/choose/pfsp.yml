@@ -1,0 +1,10 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.choose.pfsp
+rl:
+  opponent:
+    train:
+      pfsp:
+        scale: x ** 3
+        sample: 9

@@ -1,0 +1,10 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.train.pool.append
+rl:
+  opponent:
+    train:
+      pool:
+        capacity: 100
+        append: stat.cost > 1000000  # or len(stat.results) > 100 and stat.result['win'] > 0.7

@@ -1,0 +1,4 @@
+extend:
+  - ${os.getcwd()}.yml
+  - ${ROOT}/lamarckian/mdp/pong/wrap/reward/action/lazy.yml
+  - ${ROOT}/lamarckian/mdp/pong/wrap/reward/velocity/busy.yml

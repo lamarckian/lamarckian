@@ -1,0 +1,3 @@
+evaluator:
+  create:
+    - lamarckian.rl.pg.Evaluator

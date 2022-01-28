@@ -1,0 +1,6 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.pong.wrap.reward.blob.potential()

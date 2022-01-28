@@ -1,0 +1,3 @@
+extend:
+  - ${os.getcwd()}.yml
+  - ../../reward/blob/immediate.yml

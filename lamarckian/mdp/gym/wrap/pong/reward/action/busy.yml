@@ -1,0 +1,8 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.pong.reward.action.busy
+  gym:
+    pong:
+      reward:
+        busy: 0.01

@@ -1,0 +1,4 @@
+ec:
+  create:
+    ${__extend__}:
+      - lamarckian.ec.wrap.record.mdp.rollout

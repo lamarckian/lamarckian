@@ -1,0 +1,5 @@
+benchmark:
+  dtlz:
+    objective: 2
+    decision:
+      dist: 10

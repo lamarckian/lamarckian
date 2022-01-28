@@ -1,0 +1,6 @@
+evaluator:
+  create:
+    - lamarckian.benchmark.real.Sphere
+benchmark:
+  sphere:
+    decision: 2

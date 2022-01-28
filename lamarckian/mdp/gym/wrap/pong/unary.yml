@@ -1,0 +1,14 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.pong.unary()
+  gym:
+    env: Pong-ramDeterministic-v0
+model:
+  backbone:
+    - lamarckian.mdp.gym.model.fc.Module
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share2

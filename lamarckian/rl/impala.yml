@@ -1,0 +1,6 @@
+rl:
+  ppo:
+    clip: 1
+evaluator:
+  create:
+    - lamarckian.rl.impala.Evaluator

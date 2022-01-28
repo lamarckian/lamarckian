@@ -1,0 +1,14 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.gym.wrap.breakout.unary()
+  gym:
+    env: Breakout-ramDeterministic-v0
+model:
+  backbone:
+    - lamarckian.mdp.gym.model.breakout.fc.Module
+  critic:
+    wrap:
+      - lamarckian.model.wrap.critic.fc.share2

@@ -1,0 +1,3 @@
+extend:
+  - ${os.getcwd()}.yml
+  - ${ROOT}/lamarckian/rl/wrap/opponent/train/choose/pfsp/draw.yml

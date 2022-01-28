@@ -1,0 +1,5 @@
+ec:
+  crossover:
+    real:
+      sbx:
+        distribution_index: 20

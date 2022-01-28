@@ -1,0 +1,14 @@
+mdp:
+  create:
+    - lamarckian.mdp.gym.MDP
+    - lamarckian.mdp.wrap.fitness.norm(-21, 21)
+    - lamarckian.mdp.gym.wrap.pong.rule.fire
+    - lamarckian.mdp.gym.wrap.pong.rule.easter_egg
+stopper:
+  cost: 1000000
+  duration: 5h
+train:
+  batch_size: 1
+rl:
+  ac:
+    truncation: 5

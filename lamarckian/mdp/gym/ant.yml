@@ -1,0 +1,5 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  gym:
+    env: Ant-v2

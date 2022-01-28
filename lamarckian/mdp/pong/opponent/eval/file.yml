@@ -1,0 +1,10 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.wrap.opponent.eval.file()
+rl:
+  opponent:
+    eval:
+      file:
+        root: ~/model/opponent/pong
+        spec: decision.blob  # opponents_train.-1.1

@@ -1,0 +1,6 @@
+extend:
+  - ${ROOT}/lamarckian/mdp/pong/wrap/trajectory/action.yml
+  - ${ROOT}/lamarckian/mdp/pong/wrap/trajectory/bat.yml
+  - ${ROOT}/lamarckian/mdp/pong/wrap/objective/action/lazy.yml
+  - ${ROOT}/lamarckian/mdp/pong/wrap/objective/velocity/busy.yml
+  # - ${ROOT}/lamarckian/mdp/wrap/objective/fitness.yml

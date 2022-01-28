@@ -1,0 +1,4 @@
+extend:
+  - ${os.getcwd()}.yml
+  - ${ROOT}/lamarckian/mdp/wrap/reward/zero.yml
+  - ../reward/blob.yml

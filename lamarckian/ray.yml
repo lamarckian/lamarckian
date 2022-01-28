@@ -1,0 +1,10 @@
+ray:
+  ignore_reinit_error: 1
+evaluator:
+  ray:
+    max_restarts: 5
+    max_task_retries: -1
+rl:
+  ray:
+    max_restarts: 5
+    max_task_retries: -1

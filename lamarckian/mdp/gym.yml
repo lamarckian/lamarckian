@@ -1,0 +1,8 @@
+mdp:
+  create:
+    - lamarckian.mdp.gym.MDP
+  gym:
+    env: CartPole-v0
+  fps: 15
+  pbrs:
+    - score

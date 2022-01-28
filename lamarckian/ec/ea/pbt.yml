@@ -1,0 +1,15 @@
+ec:
+  create:
+    - lamarckian.ec.ea.pbt.PBT_
+    - lamarckian.ec.ea.pbt.wrap.exploit.ttest
+    - lamarckian.ec.ea.pbt.wrap.exploit.truncation
+  mutation:
+    blob:
+      create:
+        - lamarckian.ec.mutation.Useless
+    real:
+      create:
+        - lamarckian.ec.ea.pbt.mutation.real.Perturb
+      perturb:
+        - 0.8
+        - 1.2

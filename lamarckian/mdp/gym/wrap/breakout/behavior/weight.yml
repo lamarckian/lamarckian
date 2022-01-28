@@ -1,0 +1,4 @@
+extend:
+  - ${os.getcwd()}.yml
+  - ../reward/weight/action/lazy.yml
+  - ../reward/weight/velocity/busy.yml

@@ -1,0 +1,9 @@
+mdp:
+  create:
+    ${__extend__}:
+      - lamarckian.mdp.wrap.render
+#      - lamarckian.mdp.gfootball.wrap.state.observation
+#record:
+#  rollout:
+#    create:
+#      - lamarckian.mdp.gfootball.record.Rollout

@@ -1,0 +1,5 @@
+ec:
+  crossover:
+    real:
+      create:
+        - lamarckian.ec.crossover.Useless

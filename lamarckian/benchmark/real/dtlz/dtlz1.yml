@@ -1,0 +1,9 @@
+extend:
+  - ${os.getcwd()}.yml
+evaluator:
+  create:
+    - lamarckian.benchmark.real.dtlz.DTLZ1
+benchmark:
+  dtlz:
+    decision:
+      dist: 5

@@ -1,0 +1,6 @@
+ec:
+  create:
+    - lamarckian.ec.ea.nsga_ii.NSGA_II_
+  ea:
+    nsga_ii:
+      density: individual['crowding_distance']
