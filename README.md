@@ -244,8 +244,8 @@ rpc_gather.gathering('gather') # gather the results of actor.gather()
 cost, tensors, results, iteration = rpc_gather()
 ```
 
-## Reproducing the Experiments on single machine.
-This section gives command of the experiments from the paper:
+## Reproducing the Experiments
+This section gives command of the experiments on single machine:
 
 ### Sampling Efficiency
 #### PPO on Pendulum
