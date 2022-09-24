@@ -1,6 +1,0 @@
-evaluator:
-  create:
-    - lamarckian.rl.disc.A3C
-rl:
-  ray:
-    num_gpus: 1
