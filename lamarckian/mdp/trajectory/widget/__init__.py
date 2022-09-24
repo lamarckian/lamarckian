@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -58,7 +58,7 @@ class State(QtWidgets.QLineEdit):
         return super().eventFilter(obj, event)
 
     def guess(self, exp):
-        comp = [f'state.inputs.{i}:{f"Feature{len(input.shape)}"}' for i, input in enumerate(exp['state']['inputs'])]
+        comp = [f"state.inputs.{i}:{encoding.get('viewer', f'Feature{len(input.shape) - 1}')}" for i, (encoding, input) in enumerate(zip(self.encoding['blob']['models'][0]['inputs'], exp['state']['inputs']))]
         for key, value in exp['state'].items():
             if key == 'image':
                 comp.append(f'state.{key}:Image')
@@ -81,26 +81,27 @@ class State(QtWidgets.QLineEdit):
             try:
                 widget.show()
                 if callable(widget) and hasattr(self, 'exp'):
-                    exp, exp_ = self.exp
-                    widget(exp, **exp_)
+                    args, kwargs = self._
+                    widget(*args, **kwargs)
             except:
                 traceback.print_exc()
 
-    def __call__(self, exp, **kwargs):
+    def __call__(self, *args, **kwargs):
         for widget in self.widgets:
             try:
                 if callable(widget):
-                    widget(exp, **kwargs)
+                    widget(*args, **kwargs)
             except:
                 traceback.print_exc()
-        self.exp = (exp, kwargs)
+        self._ = (args, kwargs)
 
 
 class Reward(QtWidgets.QTabWidget):
-    def __init__(self, parent, encoding, **kwargs):
+    def __init__(self, parent, encoding, trajectory, **kwargs):
         super().__init__()
         self.parent = parent
         self.encoding = encoding
+        self.trajectory = trajectory
         self.kwargs = kwargs
         for reward in encoding['blob']['reward']:
             widget = FigureCanvasQTAgg(plt.figure())
@@ -108,22 +109,21 @@ class Reward(QtWidgets.QTabWidget):
         model = encoding['blob']['models'][kwargs.get('me', 0)]
         names = model['discrete'][0]
         self.color = get_action_color(len(names))
-        self.trajectory = []
+        self.currentChanged.connect(self.plot)
 
     def closeEvent(self, event):
         plt.close(self.figure)
 
-    def plot(self, trajectory):
-        self.trajectory = trajectory
+    def plot(self):
         x = np.arange(len(self.trajectory))
-        for i in range(self.count()):
-            y = np.array([exp['reward'][i] for exp in self.trajectory])
-            widget = self.widget(i)
-            ax = widget.figure.gca()
-            ax.cla()
-            ax.plot(x, y)
-            widget.figure.tight_layout()
-            widget.draw()
+        index = self.currentIndex()
+        y = np.array([exp['reward'][index] for exp in self.trajectory])
+        widget = self.currentWidget()
+        ax = widget.figure.gca()
+        ax.cla()
+        ax.plot(x, y)
+        widget.figure.tight_layout()
+        widget.draw()
         self.artist = []
 
     def __call__(self, frame):
@@ -137,16 +137,16 @@ class Reward(QtWidgets.QTabWidget):
         action = int(exp['discrete'][0])
         color = self.color[action]
         marker = '-' if self.trajectory[frame].get('success', True) else '--'
-        for i in range(self.count()):
-            reward = self.trajectory[frame]['reward'][i]
-            widget = self.widget(i)
-            ax = widget.figure.gca()
-            xlim, ylim = ax.get_xlim(), ax.get_ylim()
-            self.artist.append(ax.plot([xlim[0], frame], [reward, reward], marker, c=color)[0])
-            self.artist.append(ax.plot([frame, frame], ylim, marker, c=color)[0])
-            ax.set_xlim(*xlim)
-            ax.set_ylim(*ylim)
-            widget.draw()
+        reward = self.trajectory[frame]['reward'][self.currentIndex()]
+        widget = self.currentWidget()
+        ax = widget.figure.gca()
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        self.artist.append(ax.plot([xlim[0], frame], [reward, reward], marker, c=color)[0])
+        self.artist.append(ax.plot([frame, frame], ylim, marker, c=color)[0])
+        self.artist.append(ax.text(xlim[0], reward, f"{reward:.1f}"))
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        widget.draw()
 
     def __len__(self):
         return len(self.trajectory)
@@ -157,11 +157,12 @@ class Action(QtWidgets.QTableWidget):
         super().__init__()
         self.parent = parent
         self.encoding = encoding
+        self.trajectory = trajectory
         self.kwargs = kwargs
         model = encoding['blob']['models'][kwargs.get('me', 0)]
         self.names = model['discrete'][0]
         self.color = [QtGui.QColor(*np.array(matplotlib.colors.to_rgb(color)) * 255) for color in get_action_color(len(self.names))]
-        rows = ['skill', 'legal', 'error', 'message', 'message_']
+        rows = ['skill', 'error', 'message', 'message_']
         self.setRowCount(len(rows))
         self.setVerticalHeaderLabels(rows)
         self.verticalHeaderItem(0).setToolTip(' '.join(self.names))
@@ -175,34 +176,26 @@ class Action(QtWidgets.QTableWidget):
         item.setBackground(self.color[action])
         item.setToolTip(str(action))
         self.setItem(0, j, item)
-        if any(exp['state'].get('legal', [True])):
-            try:
-                cell = QtWidgets.QCheckBox()
-                cell.setEnabled(False)
-                cell.setCheckState(int(exp['state']['legal'][action]) * 2)
-                self.setCellWidget(1, j, cell)
-            except KeyError:
-                pass
         error = exp.get('error', '')
         if error:
-            self.setItem(2, j, QtWidgets.QTableWidgetItem(error))
+            self.setItem(1, j, QtWidgets.QTableWidgetItem(error))
+        self.setItem(2, j, QtWidgets.QTableWidgetItem())
         self.setItem(3, j, QtWidgets.QTableWidgetItem())
-        self.setItem(4, j, QtWidgets.QTableWidgetItem())
 
     def set_message(self, j, message):
-        item = self.item(3, j)
+        item = self.item(2, j)
         item.setText(message)
         item.setToolTip(message)
         try:
             message_ = self.trajectory[j + 1].get('message', '')
-            item = self.item(4, j)
+            item = self.item(3, j)
             item.setText(message_)
             item.setToolTip(message_)
         except IndexError:
             pass
 
     def set(self, trajectory):
-        self.trajectory = trajectory
+        self.trajectory[:] = trajectory
         size = len(trajectory)
         self.setColumnCount(size)
         self.setHorizontalHeaderLabels(list(map(str, range(size))))

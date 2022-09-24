@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -23,12 +23,19 @@ from . import wrap
 
 
 class Number(object):
-    def __init__(self, max, first=0):
+    def __init__(self, max, first=0, **kwargs):
         self.max = max
         self.count = max if first is None else first
+        self.kwargs = kwargs
 
     def __repr__(self):
         return f'{self.count}/{self.max}'
+
+    def __int__(self):
+        return self.count
+
+    def __len__(self):
+        return self.max
 
     def reset(self, count=0):
         self.count = count
@@ -42,9 +49,10 @@ class Number(object):
 
 
 class Time(object):
-    def __init__(self, interval, first=False):
+    def __init__(self, interval, first=False, **kwargs):
         self.start = 0 if first else time.time()
         self.interval = humanfriendly.parse_timespan(interval) if isinstance(interval, str) else interval
+        self.kwargs = kwargs
 
     def __repr__(self):
         elapsed = time.time() - self.start

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -61,24 +61,28 @@ class Feature1(QtWidgets.QWidget):
         self.encoding = encoding
         self.spec = spec
         self.kwargs = kwargs
-        header, = self.get_header()
+        header = self.get_header()
         layout = QtWidgets.QVBoxLayout(self)
         self.widget_search = QtWidgets.QLineEdit()
         self.widget_search.textChanged.connect(self.on_search)
         layout.addWidget(self.widget_search)
-        self.widget_state = QtWidgets.QTableWidget()
-        self.widget_state.setRowCount(2)
-        self.widget_state.verticalHeader().hide()
-        self.widget_state.setColumnCount(len(header))
-        self.widget_state.setHorizontalHeaderLabels(header)
-        for i in range(self.widget_state.rowCount()):
-            for j in range(self.widget_state.columnCount()):
-                self.widget_state.setItem(i, j, QtWidgets.QTableWidgetItem())
-        self.widget_state.resizeColumnsToContents()
-        self.widget_state.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
-        self.widget_state.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
-        self.background = types.SimpleNamespace(item=self.widget_state.item(0, 0).background())
-        layout.addWidget(self.widget_state)
+        self.widget_roles = QtWidgets.QTabWidget()
+        for role in range(encoding['blob'].get('roles', 1)):
+            widget = QtWidgets.QTableWidget()
+            widget.setRowCount(2)
+            widget.verticalHeader().hide()
+            widget.setColumnCount(len(header))
+            widget.setHorizontalHeaderLabels(header)
+            for i in range(widget.rowCount()):
+                for j in range(widget.columnCount()):
+                    item = QtWidgets.QTableWidgetItem()
+                    widget.setItem(i, j, item)
+            widget.resizeColumnsToContents()
+            widget.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
+            widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+            self.widget_roles.addTab(widget, str(role))
+        self.background = types.SimpleNamespace(item=item.background())
+        layout.addWidget(self.widget_roles)
         self.setWindowTitle(spec)
         self.cmap = self.get_cmap()
 
@@ -87,7 +91,7 @@ class Feature1(QtWidgets.QWidget):
         if header is not None:
             return header
         elif 'dim' in self.kwargs:
-            return [list(map(str, range(self.kwargs['dim'])))]
+            return list(map(str, range(self.kwargs['dim'])))
         else:
             index = int(re.match(r'state\.inputs\.(\d+)', self.spec).group(1))
             me = self.kwargs.get('me', 0)
@@ -95,25 +99,27 @@ class Feature1(QtWidgets.QWidget):
             header = input.get('header', None)
             if header is None:
                 dim, = input['shape']
-                return [list(map(str, range(dim)))]
+                return list(map(str, range(dim)))
             else:
                 return header
 
     def get_cmap(self):
+        widget = self.widget_roles.currentWidget()
         if 'trajectory' in self.kwargs:
             trajectory = np.array([glom.glom(exp, self.spec) for exp in self.kwargs['trajectory']])
             _, dim = trajectory.shape
-            assert dim == self.widget_state.columnCount(), (dim, self.widget_state.columnCount())
+            assert dim == widget.columnCount(), (dim, widget.columnCount())
             vmin, vmax = trajectory.min(0), trajectory.max(0)
         else:
-            dim = self.widget_state.columnCount()
+            dim = widget.columnCount()
             vmin, vmax = np.full(dim, np.finfo(float).max), np.full(dim, np.finfo(float).min)
         return [matplotlib.cm.ScalarMappable(norm=matplotlib.colors.Normalize(vmin, vmax), cmap=matplotlib.cm.jet) for vmin, vmax in zip(vmin, vmax)]
 
     def update_cmap(self, state):
+        widget = self.widget_roles.currentWidget()
         for i, (value, cmap) in enumerate(zip(state, self.cmap)):
-            cmap.norm.vmin, cmap.norm.vmax = min(cmap.norm.vmin, value), max(cmap.norm.vmax, value)
-            self.widget_state.horizontalHeaderItem(i).setToolTip(f'{i}: {cmap.norm.vmin}--{cmap.norm.vmax}')
+            cmap.norm.vmin, cmap.norm.vmax = min(cmap.norm.vmin, value.min()), max(cmap.norm.vmax, value.max())
+            widget.horizontalHeaderItem(i).setToolTip(f'{i}: {cmap.norm.vmin}--{cmap.norm.vmax}')
 
     @staticmethod
     def set_value(item, value, cmap):
@@ -123,61 +129,61 @@ class Feature1(QtWidgets.QWidget):
             item.setBackground(QtGui.QColor(*color))
 
     def __call__(self, exp, **kwargs):
-        state = glom.glom(exp, self.spec)
+        widget = self.widget_roles.currentWidget()
+        state = glom.glom(exp, self.spec)[self.widget_roles.currentIndex()]
         dim, = state.shape
-        assert dim == self.widget_state.columnCount(), (dim, self.widget_state.columnCount())
+        assert dim == widget.columnCount(), (dim, widget.columnCount())
         self.update_cmap(state)
         if kwargs:
-            state_ = glom.glom(kwargs, self.spec)
+            state_ = glom.glom(kwargs, self.spec)[self.widget_roles.currentIndex()]
             dim, = state_.shape
-            assert dim == self.widget_state.columnCount(), (dim, self.widget_state.columnCount())
+            assert dim == widget.columnCount(), (dim, widget.columnCount())
             self.update_cmap(state_)
         for j, value in enumerate(state):
-            self.set_value(self.widget_state.item(0, j), value, self.cmap[j])
+            self.set_value(widget.item(0, j), value, self.cmap[j])
         if kwargs:
             for j, value in enumerate(state_):
-                self.set_value(self.widget_state.item(1, j), value, self.cmap[j])
+                self.set_value(widget.item(1, j), value, self.cmap[j])
 
     def on_search(self, text):
-        for j in range(self.widget_state.columnCount()):
-            self.widget_state.item(0, j).setSelected(False)
+        widget = self.widget_roles.currentWidget()
+        for j in range(widget.columnCount()):
+            widget.item(0, j).setSelected(False)
         if text:
-            for j in range(self.widget_state.columnCount()):
-                if self.widget_state.horizontalHeaderItem(j).text().startswith(text):
-                    item = self.widget_state.item(0, j)
-                    self.widget_state.scrollToItem(item)
+            for j in range(widget.columnCount()):
+                if widget.horizontalHeaderItem(j).text().startswith(text):
+                    item = widget.item(0, j)
+                    widget.scrollToItem(item)
                     item.setSelected(True)
                     return
 
 
-class Feature2(FigureCanvasQTAgg):
-    def __init__(self, parent, encoding, spec, **kwargs):
-        super().__init__(plt.figure())
-        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowStaysOnTopHint)
-        self.parent = parent
-        self.encoding = encoding
-        self.spec = spec
-        self.kwargs = kwargs
+class Feature2(Feature1):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         index = int(re.match(r'state\.inputs\.(\d+)', self.spec).group(1))
         me = self.kwargs.get('me', 0)
         input = self.encoding['blob']['models'][me]['inputs'][index]
-        try:
-            self.header, _ = input['header']
-        except (KeyError, TypeError):
-            self.header = False
-        self.setWindowTitle(spec)
-        self.figure.tight_layout()
-
-    def closeEvent(self, event):
-        plt.close(self.figure)
+        count, dim = input['shape'][-2:]
+        for role in range(self.widget_roles.count()):
+            widget = self.widget_roles.widget(role)
+            assert dim == widget.columnCount(), (dim, widget.columnCount())
+            widget.setRowCount(count)
+            for i in range(widget.rowCount()):
+                for j in range(widget.columnCount()):
+                    item = QtWidgets.QTableWidgetItem()
+                    widget.setItem(i, j, item)
 
     def __call__(self, exp, **kwargs):
-        state = glom.glom(kwargs, self.spec)
-        assert len(state.shape) == 2, state.shape
-        ax = self.figure.gca()
-        ax.cla()
-        sns.heatmap(state, cbar=False, xticklabels=False, yticklabels=self.header, square=True, ax=ax, **glom.glom(self.kwargs['config'], 'mdp.debug.feature2', default={}))
-        self.draw()
+        widget = self.widget_roles.currentWidget()
+        state = glom.glom(kwargs, self.spec)[self.widget_roles.currentIndex()]
+        count, dim = state.shape
+        assert dim == widget.columnCount(), (dim, widget.columnCount())
+        assert count == widget.rowCount(), (count, widget.rowCount())
+        self.update_cmap(state)
+        for i, role in enumerate(state):
+            for j, value in enumerate(role):
+                self.set_value(widget.item(i, j), value, self.cmap[j])
 
 
 class Feature3(QtWidgets.QWidget):
@@ -267,7 +273,7 @@ class Legal(QtWidgets.QWidget):
         return names
 
     def __call__(self, exp, **kwargs):
-        state = glom.glom(exp, self.spec)
+        state, = glom.glom(exp, self.spec)
         dim, = state.shape
         assert dim == self.widget_state.columnCount(), (dim, self.widget_state.columnCount())
         for j, value in enumerate(state):

@@ -1,0 +1,3 @@
+mdp:
+  create:
+    - lamarckian.mdp.mujoco.MDP

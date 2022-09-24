@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -60,25 +60,21 @@ class Graph(object):
                 return _
             with contextlib.closing(lamarckian.util.restoring.attr(evaluator.model, forward=wrap(evaluator.model.forward))):
                 recorder.writer.add_graph(evaluator.model, inputs)
-            recorder.writer.add_text(self.tag, humanfriendly.format_size(sum(value.numpy().nbytes for value in evaluator.model.state_dict().values())), self.cost)
 
 
 class Model(object):
     HEADER = '| layer | shape | bytes | size | density |\n| :-- | :-- | :-- | :-- | :-- |\n'
 
-    def __init__(self, tag, cost, blob):
+    def __init__(self, tag, cost, layers, sort='bytes'):
         self.tag = tag
         self.cost = cost
-        self.blob = blob
+        self.layers = layers
+        self.sort = sort
 
     def __call__(self, recorder):
-        if hasattr(recorder, 'evaluator'):
-            evaluator = recorder.evaluator
-            model = evaluator.model
-            state_dict = lamarckian.model.from_blob(self.blob, model.state_dict())
-            layers = [dict(key=key, value=value, density=value.abs().mean().item()) for key, value in state_dict.items()]
-            layers = sorted(layers, key=operator.itemgetter('density'), reverse=True)
-            recorder.writer.add_text(f"{self.tag}/size", self.HEADER + NL.join([f"| {layer['key']} | {'x'.join(map(str, layer['value'].shape))} | {layer['value'].numpy().nbytes} | {humanfriendly.format_size(layer['value'].numpy().nbytes)} | {layer['density']} |" for layer in layers]), self.cost)
+        layers = [dict(key=key, value=value, bytes=value.nbytes, density=np.abs(value).mean().item()) for key, value in self.layers.items()]
+        layers = sorted(layers, key=operator.itemgetter(self.sort), reverse=True)
+        recorder.writer.add_text(f"{self.tag}/size", self.HEADER + NL.join([f"| {layer['key']} | {'x'.join(map(str, layer['value'].shape))} | {layer['bytes']} | {humanfriendly.format_size(layer['bytes'])} | {layer['density']} |" for layer in layers]), self.cost)
 
 
 class Freq(object):
@@ -143,8 +139,7 @@ class Rollout(object):
             fig = plt.figure()
             ax = fig.gca()
             discount = glom.glom(kwargs['config'], 'rl.discount')
-            for i, name in enumerate(tqdm.tqdm(encoding['reward'], desc=f"dump reward")):
-                reward = np.array([exp['reward'][i] for exp in trajectory])
+            for name, reward in zip(tqdm.tqdm(encoding['reward'], desc=f"dump reward"), np.moveaxis([exp['reward'] for exp in trajectory], -1, 0)):
                 ax.cla()
                 ax.plot(*zip(*enumerate(reward)))
                 fig.tight_layout()
@@ -165,10 +160,14 @@ class Rollout(object):
             plt.close(fig)
         if glom.glom(kwargs['config'], 'record.evaluate.discrete', default=True):
             encoding = self.state['encoding']['blob']
-            for i, names in enumerate(tqdm.tqdm(encoding['models'][encoding['me']].get('discrete', []), desc=f"dump discrete")):
-                total = [exp['discrete'][i].item() for exp in trajectory]
-                success = [exp['discrete'][i].item() for exp in trajectory if not exp.get('error', '')]
-                total, success = np.bincount(total, minlength=len(names)), np.bincount(success, minlength=len(names))
+            for i, names in enumerate(tqdm.tqdm(encoding['models'][0].get('discrete', []), desc=f"dump discrete")):
+                total = torch.cat([exp['discrete'][i] for exp in trajectory]).cpu().numpy()
+                total = np.bincount(total.reshape(-1), minlength=len(names))
+                try:
+                    success = torch.cat([exp['discrete'][i] for exp in trajectory if not exp.get('error', '')]).cpu().numpy()
+                    success = np.bincount(success.reshape(-1), minlength=len(names))
+                except:
+                    success = np.zeros(len(names), np.int)
                 recorder.writer.add_text(f"{self.tag}/discrete{i}", self.HEADER_DISCRETE + NL.join([f"| {name} | {success} | {total} |" for name, success, total in zip(names, success, total)]), self.cost)
 
     def __call__(self, recorder):

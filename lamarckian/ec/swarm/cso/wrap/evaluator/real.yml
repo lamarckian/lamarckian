@@ -1,0 +1,14 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.swarm.wrap.evaluator.cso.real.cso()
+ec:
+  cso:
+    real:
+      velocity:
+        min: 0
+        max: 1
+      weight:
+        inertia: 1
+        winner: 1
+        center: 0

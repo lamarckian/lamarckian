@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -14,6 +14,10 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
+
+def get_node_ip_address():
+    return '127.0.0.1'
 
 
 def placement_group(*args, **kwargs):

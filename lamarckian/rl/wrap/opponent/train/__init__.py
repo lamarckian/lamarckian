@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -37,26 +37,24 @@ def trigger(rl):
     NAME_FUNC = inspect.getframeinfo(inspect.currentframe()).function
     PATH_FUNC = f'{__name__}.{NAME_FUNC}'
 
-    def broadcast(self):
-        blobs = self._choose_opponent_train()['blobs']
-        assert blobs, blobs
-        self.set_opponent_train(blobs)
+    class Broadcaster(lamarckian.rl.remote.Broadcaster):
+        def __init__(self, rl, *args, **kwargs):
+            super().__init__(rl.actors, *args, **rl.kwargs, **kwargs)
+            self.rl = rl
+
+        def broadcast(self, rpc):
+            blobs = self.rl._choose_opponent_train()['blobs']
+            assert blobs, blobs
+            rpc('set_opponent_train', blobs)
 
     class RL(rl):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            setattr(self, PATH_FUNC, types.SimpleNamespace(stopper=eval('lambda outcome: ' + str(glom.glom(kwargs['config'], f"rl.opponent.train.{NAME_FUNC}", default=True)))))
-
-        def training(self):
-            training = super().training()
-            broadcaster = lamarckian.rl.remote.Runner(lambda: broadcast(self))
-            getattr(self, PATH_FUNC).broadcaster = broadcaster
-
-            def close():
-                broadcaster.close()
-                training.close()
-            return types.SimpleNamespace(close=close)
+            setattr(self, PATH_FUNC, types.SimpleNamespace(
+                broadcaster=Broadcaster(self),
+                stopper=eval('lambda outcome: ' + str(glom.glom(kwargs['config'], f"rl.opponent.train.{NAME_FUNC}", default=True))),
+            ))
 
         def __call__(self, *args, **kwargs):
             attr = getattr(self, PATH_FUNC)

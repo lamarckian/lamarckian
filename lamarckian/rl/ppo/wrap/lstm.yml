@@ -1,0 +1,4 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.rl.ppo.wrap.lstm

@@ -1,0 +1,9 @@
+extend:
+  - ${os.getcwd()}.yml
+mdp:
+  mujoco:
+    model: MUJOCO_PATH/model/humanoid.xml
+    inputs:
+      - qpos
+      - qvel
+    frame: 1000

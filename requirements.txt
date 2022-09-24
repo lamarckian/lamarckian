@@ -30,5 +30,6 @@ py-lz4framed
 pyzmq
 tenacity
 toolz
+python-prctl
 port-for
 Jinja2<3

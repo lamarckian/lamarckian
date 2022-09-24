@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -37,11 +37,13 @@ class Actor(object):
 
 
 def _test(rpc):
-    repr(rpc)
+    print(repr(rpc))
     assert rpc('echo') is None
-    result = rpc.fetch_any('echo', np.zeros(1))
-    assert isinstance(result, np.ndarray), result
-    results = rpc.fetch_all('echo', np.zeros(1))
+    for i in range(5):
+        result = rpc.fetch_any('echo', i)
+        assert result == i, (result, i)
+    results = rpc.fetch_all('echo', np.zeros(0))
+    assert len(results) == len(rpc), (len(results), len(rpc))
     for result in results:
         assert isinstance(result, np.ndarray), result
     # wrong
@@ -64,28 +66,58 @@ def _test(rpc):
 
 def test_flat():
     from . import Flat as RPC
-    from .wrap import flat as wrap
+    from ..wrap import all as wrap
     config = lamarckian.util.config.read(os.path.dirname(lamarckian.__file__) + '.yml')
+    glom.assign(config, 'ray.local_mode', True, missing=dict)
     ray.init(local_mode=True)
     actor = ray.remote(wrap(Actor))
     parallel = int(ray.cluster_resources()['CPU'])
     actors = [actor.remote(i) for i in range(parallel)]
-    with contextlib.closing(RPC(actors, config=config)) as rpc:
-        _test(rpc)
+    for modifies in [
+        [('rpc.all.fake', 0)],
+        [('rpc.all.fake', 10)],
+    ]:
+        for key, value in modifies:
+            glom.assign(config, key, value, missing=dict)
+        with contextlib.closing(RPC(actors, config=config)) as rpc:
+            _test(rpc)
+
+
+def test_hybrid():
+    from . import Hybrid as RPC
+    from ..wrap import all as wrap
+    config = lamarckian.util.config.read(os.path.dirname(lamarckian.__file__) + '.yml')
+    glom.assign(config, 'ray.local_mode', True, missing=dict)
+    ray.init(local_mode=True)
+    actor = ray.remote(wrap(Actor))
+    parallel = int(ray.cluster_resources()['CPU'])
+    actors = [actor.remote(i) for i in range(parallel)]
+    for modifies in [
+        [('rpc.all.fake', 0)],
+        [('rpc.all.fake', 10)],
+        [('rpc.shm', '1k')],
+    ]:
+        for key, value in modifies:
+            glom.assign(config, key, value, missing=dict)
+        with contextlib.closing(RPC(actors, config=config)) as rpc:
+            _test(rpc)
 
 
 def test_tree():
     from . import Tree as RPC
-    from .wrap import tree as wrap
+    from ..wrap import all as wrap
     config = lamarckian.util.config.read(os.path.dirname(lamarckian.__file__) + '.yml')
+    glom.assign(config, 'ray.local_mode', True, missing=dict)
     ray.init(local_mode=True)
     actor = ray.remote(wrap(Actor))
     parallel = int(ray.cluster_resources()['CPU'])
     actors = [actor.remote(i) for i in range(parallel)]
-    for key, value in [
-        ('rpc.all.local', False),
-        ('rpc.all.local', True),
+    for modifies in [
+        [('rpc.all.fake', 0)],
+        [('rpc.all.fake', 10)],
+        [('rpc.shm', '1k')],
     ]:
-        glom.assign(config, key, value, missing=dict)
+        for key, value in modifies:
+            glom.assign(config, key, value, missing=dict)
         with contextlib.closing(RPC(actors, config=config)) as rpc:
             _test(rpc)

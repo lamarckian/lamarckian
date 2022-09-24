@@ -1,6 +1,11 @@
 evaluator:
   create:
     - lamarckian.rl.disc.DDP
+  group: 0
+  progress: 1
 rl:
   ray:
     num_gpus: 1
+  ppo:
+    prefetcher:
+      parallel: 3

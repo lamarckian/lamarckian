@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,14 +15,16 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import time
 import ast
 import random
 import collections
+import traceback
+import logging
+import asyncio
 
 import numpy as np
 
-from . import config, counter, file, pareto, non_dominated, parse, rnd, remote, duration, restoring, testing, record, recorder, mpl, ray_fake, rpc, hook
+from . import config, counter, file, pareto, non_dominated, parse, rnd, remote, duration, restoring, testing, record, recorder, mpl, ray_fake, serialize, rpc, hook
 
 
 class Closing(object):
@@ -84,7 +86,7 @@ class Hparam(object):
             assert key not in self.boundary[coding], (key, coding)
             self.boundary[coding][key] = boundary
             value = get(boundary)
-        self.value[key] = value
+        self.value[key] = value if dtype is None else dtype(value)
 
     def describe(self):
         return self.boundary
@@ -136,12 +138,30 @@ class Hparam(object):
         return dict(value=self.value, boundary=self.boundary)
 
 
-def reduce(results):
+class DelayNewline(object):
+    def __init__(self, logger=None):
+        if logger is None:
+            logger = logging.getLogger()
+            if not logger.handlers:
+                logging.basicConfig()
+        self.handler = next(handler for handler in logger.handlers if isinstance(handler, logging.StreamHandler))
+        self.terminator = self.handler.terminator
+        self.handler.terminator = ''
+
+    def close(self):
+        self(self.terminator)
+        self.handler.terminator = self.terminator
+
+    def __call__(self, *args, **kwargs):
+        return self.handler.stream.write(*args, **kwargs)
+
+
+def reduce(results, agg=lambda values: np.nanmean(values, 0)):
     if len(results) > 1:
         result = {}
         for key, value in results[0].items():
             try:
-                result[key] = np.nanmean([result[key] for result in results], 0)
+                result[key] = agg([result[key] for result in results])
             except:
                 pass
         return result
@@ -170,3 +190,12 @@ def try_cast(s):
 def abs_mean(data, dtype=np.float32):
     assert isinstance(data, np.ndarray), type(data)
     return np.sum(np.abs(data)) / dtype(data.size)
+
+
+def print_exc(task):
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except:
+        traceback.print_exc()

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
 import contextlib
+import types
 import pickle
 import hashlib
 import codecs
@@ -26,6 +27,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import glom
+import humanfriendly
 
 import lamarckian
 from lamarckian.mdp import rollout
@@ -57,34 +59,37 @@ def gae(reward, value, value_, discount, lmd):
 class Actor(pg.Actor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         self.hparam.setup('truncation', glom.glom(kwargs['config'], f'rl.{NAME}.truncation', default=np.iinfo(np.int).max), np.int)
         self.norm_advantage = eval('lambda advantage: ' + glom.glom(kwargs['config'], f'rl.{NAME}.norm_advantage', default='advantage'))
         gae = glom.glom(kwargs['config'], f'rl.{NAME}.gae', default=1)
-        for name in encoding['reward']:
+        for name in self.encoding['blob']['reward']:
             self.hparam.setup(f"gae_{name}", glom.glom(kwargs['config'], f'rl.{NAME}.gae_{name}', default=gae), np.float)
+        self.truncator = lamarckian.rl.Truncator(self, self.hparam['truncation'])
+
+    def close(self):
+        self.truncator.close()
+        return super().close()
 
     def describe_model(self):
         return glom.glom(self.kwargs['config'], 'model.backbone') + glom.glom(self.kwargs['config'], 'model.wrap', default=[]) + glom.glom(self.kwargs['config'], 'model.critic.wrap', default=[])
 
-    def create_truncator(self):
-        return lamarckian.rl.Truncator(self, self.hparam['truncation'])
-
     def training(self):
         training = super().training()
-        self.truncator = self.create_truncator()
-        return lamarckian.util.Closing(self.truncator, training)
+        self.truncator.step = self.hparam['truncation']
+        return training
 
     def rollout_mc(self):
         me, opponent = self.spawn()
         loop = asyncio.get_event_loop()
         battle = self.mdp.reset(me, *opponent, loop=loop)
         with contextlib.closing(battle), contextlib.closing(self.agent.train(self.model, hparam=self.hparam, generator=self.generator, **self.kwargs)) as agent, contextlib.closing(self.make_agents(opponent)) as agents:
-            trajectory, exp = loop.run_until_complete(asyncio.gather(
+            task = asyncio.gather(
                 rollout.get_trajectory(battle.controllers[0], agent, cast=self.truncator.cast),
                 *[rollout.get_cost(controller, agent) for controller, agent in zip(battle.controllers[1:], agents.values())],
                 *battle.ticks,
-            ))[0]
+            )
+            task.add_done_callback(lamarckian.util.print_exc)
+            trajectory, exp = loop.run_until_complete(task)[0]
             result = battle.controllers[0].get_result()
             if opponent:
                 result['digest_opponent_train'] = hashlib.md5(pickle.dumps(list(opponent.values()))).hexdigest()
@@ -128,9 +133,9 @@ class Actor(pg.Actor):
             pass
         tensors['logp'] = torch.stack(logp, -1)
         # reward
-        reward = torch.FloatTensor(np.array([exp['reward'] for exp in trajectory])).to(self.device)
+        reward = torch.from_numpy(np.array([exp['reward'] for exp in trajectory])).to(self.device)
         tensors['reward'] = self.norm_reward(reward)
-        tensors['done'] = torch.from_numpy(np.array([exp['done'] for exp in trajectory], np.bool)).unsqueeze(-1).to(self.device)
+        tensors['done'] = torch.FloatTensor(np.array([np.ones(exp['reward'].shape[:-1] + (1,)) * exp['done'] for exp in trajectory])).to(self.device)
         return tensors
 
 
@@ -147,8 +152,7 @@ class Learner(Actor):
         with codecs.open(os.path.join(os.path.dirname(os.path.abspath(lamarckian.__file__)), 'import.py'), 'r', 'utf-8') as f:
             exec(f.read(), var)
         self.optimizer = eval('lambda params, lr: ' + glom.glom(self.kwargs['config'], 'train.optimizer'), var)(filter(lambda p: p.requires_grad, self.model.parameters()), self.hparam['lr'])
-        encoding = self.describe()['blob']
-        self.gae = torch.FloatTensor([self.hparam[f"gae_{name}"] for name in encoding['reward']]).to(self.device)
+        self.gae = torch.FloatTensor([self.hparam[f"gae_{name}"] for name in self.encoding['blob']['reward']]).to(self.device)
         return super().training()
 
     def get_entropy(self, trajectory):
@@ -165,7 +169,7 @@ class Learner(Actor):
         tensors = super().to_tensor(trajectory, exp)
         tensors['critic'] = critic = torch.cat([exp['critic'] for exp in trajectory])
         with torch.no_grad():
-            discount = torch.logical_not(tensors['done']).float() * self.discount
+            discount = torch.logical_not(tensors['done']).to(tensors['reward'].dtype) * self.discount
             terminal = torch.zeros(1, discount.shape[-1]).to(self.device) if exp is None else self.model(*exp['inputs'])['critic']
             if (self.gae < 1).any():
                 tensors['advantage'] = advantage = torch.stack(gae(tensors['reward'], critic, torch.cat([critic[1:], terminal]), discount, self.gae))
@@ -177,9 +181,9 @@ class Learner(Actor):
         return tensors
 
     def get_losses(self, tensors):
-        advantage = self.norm_advantage(tensors['advantage']).sum(-1)
+        advantage = self.norm_advantage(tensors['advantage']).sum(-1).to(tensors['logp'].dtype)
         policy = -tensors['logp'].mean(-1) * advantage
-        critic = self.loss_critic(tensors['critic'], tensors['credit'], reduction='none')
+        critic = self.loss_critic(tensors['critic'], tensors['credit'].to(tensors['critic'].dtype), reduction='none')
         return dict(policy=policy.mean(), entropy=tensors['entropy'].mean()), critic.mean(0)
 
     def backward(self):
@@ -201,7 +205,6 @@ class Learner(Actor):
 class Evaluator(Learner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
         self.saver = lamarckian.evaluator.Saver(self)
         self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
@@ -212,10 +215,6 @@ class Evaluator(Learner):
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
             lambda *args, **kwargs: self.profiler(self.cost),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
         )
         self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
@@ -231,19 +230,20 @@ class Evaluator(Learner):
                 **{f'{NAME}/loss': outcome['loss'].item()},
                 **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
                 **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
+                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(self.encoding['blob']['reward'], outcome['loss_critic'])},
             }),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
-            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, self.get_blob()),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value.cpu().numpy() for key, value in self.model.state_dict().items()}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
         self.recorder.put(lamarckian.rl.record.Graph(f"{NAME}/graph", self.cost))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.cpu().numpy().nbytes for value in self.model.state_dict().values()))}))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)

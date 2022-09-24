@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -81,7 +81,7 @@ class EC(lamarckian.evaluator.Evaluator):
         return population
 
 
-@lamarckian.rl.wrap.remote.parallel()
+@lamarckian.rl.wrap.remote.parallel
 @lamarckian.util.rpc.wrap.map_methods.all('set')
 @lamarckian.util.rpc.wrap.map_methods.any('describe', 'initialize', 'get')
 class Sync(EC):
@@ -106,9 +106,12 @@ class Sync(EC):
         Evaluator = lamarckian.evaluator.parse(*specs, **kwargs)
         Evaluator = lamarckian.util.rpc.wrap.all(Evaluator)
         Evaluator = lamarckian.util.rpc.wrap.any(Evaluator)
+        Evaluator = lamarckian.evaluator.wrap.fix_ray(Evaluator)
+        class _(Evaluator):
+            pass
+        cls = _.remote_cls(**kwargs)
         root = kwargs.get('root', None)
         record = glom.glom(kwargs['config'], 'ec.train.record')
-        cls = Evaluator.remote_cls(**kwargs)
 
         def create(index, parallel):
             try:
@@ -223,4 +226,4 @@ class Async(Sync):
         raise NotImplementedError()
 
 
-from . import ea
+from . import ea, swarm

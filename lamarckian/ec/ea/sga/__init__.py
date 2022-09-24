@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -60,10 +60,6 @@ class SGA_(SGA):
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
             lambda *args, **kwargs: self.profiler(self.cost),
         )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
         encoding = self.describe()
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.histogram')),
@@ -83,9 +79,9 @@ class SGA_(SGA):
             traceback.print_exc()
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def __call__(self):
         outcome = super().__call__()
@@ -114,10 +110,6 @@ class SteadyState_(SteadyState):
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
             lambda *args, **kwargs: self.profiler(self.cost),
         )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
         encoding = self.describe()
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.histogram')),
@@ -134,9 +126,9 @@ class SteadyState_(SteadyState):
         self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"topology/{i}": text for i, text in enumerate(self.rpc_all.fetch_all('describe_rpc_all'))}))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def __call__(self):
         outcome = super().__call__()

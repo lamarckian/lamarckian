@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -41,8 +41,8 @@ class Widget(QtWidgets.QDialog):
         self.widget_action = widget.Action(self, mdp['encoding'], data['trajectory'], me=me, **kwargs)
         self.widget_action.setFocusPolicy(QtCore.Qt.NoFocus)
         layout.addWidget(self.widget_action)
-        self.widget_reward = widget.Reward(self, mdp['encoding'], me=me, **kwargs)
-        self.widget_reward.plot(data['trajectory'])
+        self.widget_reward = widget.Reward(self, mdp['encoding'], self.widget_action.trajectory, me=me, **kwargs)
+        self.widget_reward.plot()
         layout.addWidget(self.widget_reward)
         self.widget_state = widget.State(self, mdp['encoding'], me=me, **data, **kwargs)
         layout.addWidget(self.widget_state)

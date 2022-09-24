@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -23,30 +23,32 @@ from lamarckian.model import Channel
 
 
 class Module(nn.Module):
-    def __init__(self, inputs, discrete, **kwargs):
+    def __init__(self, inputs, **kwargs):
         super().__init__()
         input, = inputs
         self.kwargs = kwargs
         channel = Channel(input['shape'][0])
         self.conv = nn.Sequential(
-            nn.Conv2d(channel(), channel.next(32), kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(int(channel), channel(32), kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(),
-            nn.Conv2d(channel(), channel.next(32), kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(int(channel), channel(32), kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(),
-            nn.Conv2d(channel(), channel.next(32), kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(int(channel), channel(32), kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(),
-            nn.Conv2d(channel(), channel.next(32), kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(int(channel), channel(32), kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(),
         )
         self.channel = np.multiply.reduce(self.conv(torch.zeros(input['shape']).unsqueeze(0)).shape)
         channel = Channel(self.channel)
-        self.linear = nn.Sequential(
-            nn.Linear(channel(), channel.next(256)),
+        self.discrete = nn.ModuleList([nn.Sequential(
+            nn.Linear(self.channel, channel(256)),
             nn.LeakyReLU(),
-            nn.Linear(channel(), len(discrete[0])),
-        )
+            nn.Linear(int(channel), len(names)),
+        ) for names in kwargs.get('discrete', [])])
 
     def forward(self, x):
         x = self.conv(x)
         self.share = x.view(x.shape[0], -1)
-        return dict(discrete=[self.linear(self.share)])
+        outputs = {}
+        outputs['discrete'] = [output(self.share) for output in self.discrete]
+        return outputs

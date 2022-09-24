@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,15 +15,19 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import contextlib
 import threading
 
+import lamarckian
 
-class Runner(object):
-    def __init__(self, func):
-        super().__init__()
-        self.func = func
-        self.running = True
+
+class Broadcaster(object):
+    def __init__(self, actors, rpc=lamarckian.util.rpc.All, **kwargs):
+        self.actors = actors
+        self.rpc = rpc
+        self.kwargs = kwargs
         self.event = threading.Event()
+        self.running = True
         self.thread = threading.Thread(target=self.run)
         self.thread.start()
 
@@ -38,7 +42,12 @@ class Runner(object):
     def __call__(self):
         self.event.set()
 
+    def broadcast(self, rpc):
+        raise NotImplementedError()
+
     def run(self):
-        while self.running:
-            self.event.wait()
-            self.func()
+        with contextlib.closing(self.rpc(self.actors, **self.kwargs)) as rpc:
+            while self.running:
+                self.event.wait()
+                self.event.clear()
+                self.broadcast(rpc)

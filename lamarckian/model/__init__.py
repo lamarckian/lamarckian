@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,18 +22,18 @@ import torch
 
 
 class Channel(object):
-    def __init__(self, channel):
-        self.channel = channel
+    def __init__(self, value):
+        self.value = value
 
-    def __call__(self):
-        return self.channel
+    def __call__(self, value):
+        self.value = value
+        return self.value
 
-    def set(self, channel):
-        self.channel = channel
+    def __int__(self):
+        return int(self.value)
 
-    def next(self, channel):
-        self.channel = channel
-        return self.channel
+    def __repr__(self):
+        return f"{self.value}"
 
 
 def to_blob(state_dict):

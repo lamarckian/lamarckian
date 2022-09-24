@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@ import hashlib
 import pickle
 import warnings
 
-from . import evaluator, record, mdp
+from . import evaluator, record
 
 
 def check(evaluator):

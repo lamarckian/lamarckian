@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -31,7 +31,6 @@ class Agent(object):
 
     def get_inputs(self, state):
         return tuple(torch.FloatTensor(a).unsqueeze(0).to(self.device) for a in state['inputs'])
-
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)

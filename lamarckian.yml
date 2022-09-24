@@ -72,6 +72,7 @@ rl:
     clip: 0.2
     reuse: 1
     prefetch: 1
+    timeout: 1m
   dqn:
     capacity: 1m
     epsilon: 0.05
@@ -80,8 +81,7 @@ rl:
 evaluator:
   create:
     - lamarckian.rl.disc.Evaluator
-  wrap:
-    - lamarckian.evaluator.wrap.fix_ray
+  wrap: []
   ray:
     num_cpus: 1
 #  parallel: 1
@@ -164,6 +164,7 @@ record:
     interval: 5m
   model:
     interval: 5m
+    sort: density
   plot:
     interval: 5m
   freq:
@@ -183,11 +184,10 @@ recorder:
   env:
     CUDA_VISIBLE_DEVICES: -1
 rpc:
-  # zmq nnpy pynng
-  backend: zmq
   # pickle pickle_lz4 msgpack msgpack_lz4 pyarrow pyarrow_lz4
   serializer: msgpack_lz4
   # shm: 0
+  sleep: 0.3
 profile:
   net_io:
     - bytes_sent

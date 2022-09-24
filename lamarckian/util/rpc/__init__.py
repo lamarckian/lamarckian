@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,17 +20,12 @@ import threading
 import collections.abc
 
 import zmq
-try:
-    import nnpy
-    import pynng
-except ImportError:
-    pass
 import glom
 import filelock
 import port_for
-import ray.services
-import ray.exceptions
+import ray
 
+import lamarckian
 from . import util, wrap, all
 from .all import Tree as All
 
@@ -41,32 +36,26 @@ class Any(object):
         self.actors = actors
         self.kwargs = kwargs
         self.ray = kwargs.get('ray', ray)
-        host = self.ray.services.get_node_ip_address()
-        backend = glom.glom(kwargs['config'], 'rpc.backend')
+        host = self.ray.util.get_node_ip_address()
         with filelock.FileLock(util.LOCK_PORT):
-            if backend == 'nnpy':
-                self.socket = types.SimpleNamespace(args=nnpy.Socket(nnpy.AF_SP, nnpy.PUSH), result=nnpy.Socket(nnpy.AF_SP, nnpy.PULL))
-            elif backend == 'pynng':
-                self.socket = types.SimpleNamespace(args=pynng.Push0(), result=pynng.Pull0())
-                for socket in self.socket.__dict__.values():
-                    socket.bind = socket.listen
-            else:
-                self.context = zmq.Context()
-                self.socket = types.SimpleNamespace(args=self.context.socket(zmq.PUSH), result=self.context.socket(zmq.PULL))
-            self.port_args = port_for.select_random(glom.glom(kwargs['config'], 'rpc.ports', default=None))
-            self.socket.args.bind(f"tcp://*:{self.port_args}")
-            self.port_result = port_for.select_random(glom.glom(kwargs['config'], 'rpc.ports', default=None))
-            self.socket.result.bind(f"tcp://*:{self.port_result}")
+            self.context = zmq.Context()
+            self.socket = types.SimpleNamespace(param=self.context.socket(zmq.PUSH), result=self.context.socket(zmq.PULL))
+            param_port = port_for.select_random(glom.glom(kwargs['config'], 'rpc.ports', default=None))
+            self.socket.param.bind(f"tcp://*:{param_port}")
+            result_port = port_for.select_random(glom.glom(kwargs['config'], 'rpc.ports', default=None))
+            self.socket.result.bind(f"tcp://*:{result_port}")
         serializer = glom.glom(kwargs['config'], 'rpc.serializer')
-        self.serializer = util.Serializer(kwargs.get('serializer', serializer))
-        self.ray.get([actor.setup_rpc_any.remote(args=f"tcp://{host}:{self.port_args}", result=f"tcp://{host}:{self.port_result}", backend=backend, serializer=serializer) for actor in actors])
+        self.serializer = lamarckian.util.serialize.Serializer(kwargs.get('serializer', serializer))
+        self.ray.get([actor.setup_rpc_any.remote(param=f"tcp://{host}:{param_port}", result=f"tcp://{host}:{result_port}", **kwargs) for actor in actors])
+        for _ in self.actors:
+            self.socket.result.recv()
         self.n = 0
         self.lock = threading.Lock()
 
     def close(self):
         for _ in range(len(self.actors)):
-            self.socket.args.send(b'')
-        # for _ in range(len(self.actors)):
+            self.socket.param.send(b'')
+        # for _ in self.actors:
         #     self.socket.result.recv()
         for socket in self.socket.__dict__.values():
             socket.close()
@@ -74,7 +63,7 @@ class Any(object):
             self.context.term()
 
     def send(self, _, *args, **kwargs):
-        return self.socket.args.send(self.serializer.serialize((_, args, kwargs)))
+        return self.socket.param.send(self.serializer.serialize((_, args, kwargs)))
 
     def receive(self):
         data = self.socket.result.recv()
@@ -86,16 +75,16 @@ class Any(object):
     def __call__(self, _, *args, **kwargs):
         data = self.serializer.serialize((_, args, kwargs))
         with self.lock:
-            self.socket.args.send(data)
+            self.socket.param.send(data)
             return self.receive()
 
     def map(self, tasks):
         assert isinstance(tasks, collections.abc.Iterator)
         with self.lock:
-            running = [self.socket.args.send(self.serializer.serialize(task)) for _, task in zip(self.actors, tasks)]
+            running = [self.socket.param.send(self.serializer.serialize(task)) for _, task in zip(self.actors, tasks)]
             for task in tasks:
                 yield self.receive()
-                self.socket.args.send(self.serializer.serialize(task))
+                self.socket.param.send(self.serializer.serialize(task))
             for _ in running:
                 yield self.receive()
 
@@ -105,23 +94,16 @@ class Gather(object):
         self.rpc_all = rpc_all
         self.kwargs = kwargs
         self.ray = kwargs.get('ray', ray)
-        host = self.ray.services.get_node_ip_address()
-        self.backend = glom.glom(kwargs['config'], 'rpc.backend')
+        host = self.ray.util.get_node_ip_address()
         with filelock.FileLock(util.LOCK_PORT):
-            if self.backend == 'nnpy':
-                self.socket = nnpy.Socket(nnpy.AF_SP, nnpy.REP)
-            elif self.backend == 'pynng':
-                self.socket = pynng.Rep0()
-                self.socket.bind = self.socket.listen
-            else:
-                self.context = zmq.Context()
-                self.socket = self.context.socket(zmq.REP)
+            self.context = zmq.Context()
+            self.socket = self.context.socket(zmq.REP)
             port = port_for.select_random(glom.glom(kwargs['config'], 'rpc.ports', default=None))
             self.socket.bind(f"tcp://*:{port}")
         self.addr = f"tcp://{host}:{port}"
         serializer = glom.glom(kwargs['config'], 'rpc.serializer')
-        self.serializer = util.Serializer(kwargs.get('serializer', serializer))
-        rpc_all('setup_rpc_gather', self.addr, backend=self.backend, serializer=serializer)
+        self.serializer = lamarckian.util.serialize.Serializer(kwargs.get('serializer', serializer))
+        rpc_all('setup_rpc_gather', self.addr, serializer=serializer)
 
     def close(self):
         self.socket.close()
@@ -138,30 +120,17 @@ class Gather(object):
             thread = threading.Thread(target=lambda: self.rpc_all('setup_rpc_gather', self.addr, name=None))
             thread.start()
             while thread.is_alive():
-                if self.backend == 'nnpy':
-                    try:
-                        self.socket.recv(nnpy.DONTWAIT)
-                        self.socket.send(b'')
-                    except nnpy.NNError:
-                        pass
-                elif self.backend == 'pynng':
-                    try:
-                        self.socket.recv(block=False)
-                        self.socket.send(b'0')
-                    except pynng.exceptions.TryAgain:
-                        pass
-                else:
-                    try:
-                        self.socket.recv(zmq.NOBLOCK)
-                        self.socket.send(b'')
-                    except zmq.Again:
-                        pass
+                try:
+                    self.socket.recv(zmq.NOBLOCK)
+                    self.socket.send(b'')
+                except zmq.Again:
+                    pass
             thread.join()
         return types.SimpleNamespace(close=close)
 
     def __call__(self):
         data = self.socket.recv()
-        self.socket.send(b'0')  # for pynng
+        self.socket.send(b'')
         result = self.serializer.deserialize(data)
         if isinstance(result, Exception):
             raise result

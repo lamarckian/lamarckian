@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -23,7 +23,84 @@ import torch
 import glom
 
 import lamarckian
-from . import record
+from . import rpc, record
+
+
+def lstm(rl):
+    learner = rl.Learner if hasattr(rl, 'Learner') else rl
+
+    class Learner(learner):
+        def forward(self, old, *args, **kwargs):
+            with torch.no_grad():
+                inputs = tuple(input.view(np.multiply.reduce(input.shape[:2]), *input.shape[2:]) for input in (input[:-1] for input in old['inputs']))
+                outputs = self.model(*inputs)
+                hidden = outputs['hidden']
+                for input, output in zip(old['inputs'][-len(hidden):], hidden):
+                    input[1:] = output.view(-1, *input.shape[1:])
+            return super().forward(old, *args, **kwargs)
+
+    if hasattr(rl, 'Learner'):
+        rl.Learner = Learner
+        return rl
+    else:
+        return Learner
+
+
+def learn(rl):
+    NAME_FUNC = inspect.getframeinfo(inspect.currentframe()).function
+    PATH_FUNC = f'{__name__}.{NAME_FUNC}'
+
+    learner = rl.Learner if hasattr(rl, 'Learner') else rl
+
+    def wrap_actor(actor):
+        to_tensor = actor.to_tensor
+
+        class Actor(actor):
+            def to_tensor(self, trajectory, *args, **kwargs):
+                tensors = to_tensor(self, trajectory, *args, **kwargs)
+                tensors[NAME_FUNC] = torch.from_numpy(np.array([exp.get(NAME_FUNC, True) for exp in trajectory], np.bool)).unsqueeze(1).to(self.device)
+                return tensors
+        return Actor
+
+    def get_record(self):
+        stat = getattr(self, PATH_FUNC)
+        return {NAME_FUNC: stat.count / stat.total}
+
+    class Learner(learner):
+        Actor = wrap_actor(learner.Actor)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            assert not hasattr(self, PATH_FUNC)
+            setattr(self, PATH_FUNC, types.SimpleNamespace(count=0, total=0))
+            self.recorder.register(
+                lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
+                lambda outcome: lamarckian.util.record.Scalar(self.cost, **get_record(self)),
+            )
+
+        def __next__(self):
+            cost, tensors, results, iterations = super().__next__()
+            stat = getattr(self, PATH_FUNC)
+            mask = tensors[NAME_FUNC]
+            stat.count += mask.sum().item()
+            stat.total += np.multiply.reduce(mask.shape)
+            return cost, tensors, results, iterations
+
+        def get_loss_policy(self, old, new):
+            loss = super().get_loss_policy(old, new)
+            mask = ~old[NAME_FUNC]
+            loss[mask] = loss[mask].detach()
+            try:
+                new['entropy'][mask] = new['entropy'][mask].detach()
+            except KeyError:
+                pass
+            return loss
+
+    if hasattr(rl, 'Learner'):
+        rl.Learner = Learner
+        return rl
+    else:
+        return Learner
 
 
 def fresh(rl):
@@ -43,63 +120,3 @@ def fresh(rl):
                     tensors = lamarckian.rl.to_device(self.device, **tensors)
                     return cost, tensors, results, iteration
     return RL
-
-
-def learnable(keys='advantage ratio entropy'.split()):
-    NAME_FUNC = inspect.getframeinfo(inspect.currentframe()).function
-    PATH_FUNC = f'{__name__}.{NAME_FUNC}'
-
-    def wrap_actor(actor):
-        to_tensor = actor.to_tensor
-
-        class Actor(actor):
-            def to_tensor(self, trajectory, *args, **kwargs):
-                tensors = to_tensor(self, trajectory, *args, **kwargs)
-                tensors['learn'] = torch.from_numpy(np.array([exp.get('learn', True) for exp in trajectory], np.bool)).unsqueeze(-1).to(self.device)
-                return tensors
-        return Actor
-
-    def decorate(rl):
-        def get_record(self):
-            stat = getattr(self.prefetcher, PATH_FUNC)
-            return {NAME_FUNC: stat.count / stat.total}
-
-        class RL(rl):
-            Actor = wrap_actor(rl.Actor)
-
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                assert not hasattr(self, PATH_FUNC)
-                self.recorder.register(
-                    lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-                    lambda outcome: lamarckian.util.record.Scalar(self.cost, **get_record(self)),
-                )
-
-            def training(self):
-                training = super().training()
-                next = self.prefetcher.__next__
-                class _(type(self.prefetcher)):
-                    def __next__(self, *arg, **kwarg):
-                        stat = types.SimpleNamespace(count=0, total=0)
-                        while True:
-                            cost, old, results = next()
-                            mask = old['learn']
-                            stat.count += mask.sum().item()
-                            stat.total += np.multiply.reduce(mask.shape)
-                            if old['learn'].any().item():
-                                break
-                        setattr(self, PATH_FUNC, stat)
-                        return cost, old, results
-                self.prefetcher.__class__ = _
-                return training
-
-            def get_losses(self, old, new):
-                mask = old['learn']
-                for key in keys:
-                    try:
-                        new[key] = new[key][mask]
-                    except KeyError:
-                        pass
-                return super().get_losses(old, new)
-        return RL
-    return decorate

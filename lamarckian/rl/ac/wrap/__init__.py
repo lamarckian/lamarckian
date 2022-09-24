@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -52,8 +52,7 @@ def fix_skip(rl):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            encoding = self.describe()['blob']
-            setattr(self, PATH_FUNC, np.array([self.hparam[f"discount_{name}"] for name in encoding['reward']]))
+            setattr(self, PATH_FUNC, np.array([self.hparam[f"discount_{name}"] for name in self.encoding['blob']['reward']]))
 
         def rollout(self):
             trajectory, exp, results = super().rollout()

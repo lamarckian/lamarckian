@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,12 +20,11 @@ import inspect
 import functools
 import multiprocessing
 
-import numpy as np
 import glom
 import zmq
 import msgpack
 import port_for
-import ray.services
+import ray
 
 import lamarckian
 from . import seed_torch
@@ -62,7 +61,7 @@ def interact(mdp):
                     _attr = getattr(self, PATH_FUNC)
                     _attr.state = state
                     if not _attr.frame:
-                        attr.socket.send(msgpack.dumps(('reset', (state,), {}), default=lamarckian.util.rpc.util.encode))
+                        attr.socket.send(msgpack.dumps(('reset', (state,), {}), default=lamarckian.util.serialize.encode))
                         attr.socket.recv()
                 return state
 
@@ -70,16 +69,17 @@ def interact(mdp):
                 attr = getattr(self.mdp, PATH_FUNC)
                 if self is attr.controller:
                     _attr = getattr(self, PATH_FUNC)
-                    action = int(kwargs['discrete'][0])
-                    attr.socket.send(msgpack.dumps(('__call__', (_attr.frame, action), {}), default=lamarckian.util.rpc.util.encode))
-                    action = msgpack.loads(attr.socket.recv(), object_hook=lamarckian.util.rpc.util.decode, strict_map_key=False)
-                    kwargs['discrete'][0] = np.array([action])
+                    attr.socket.send(msgpack.dumps(('__call__', (_attr.frame,), {key: value for key, value in kwargs.items() if key in {'discrete', 'continuous'}}), default=lamarckian.util.serialize.encode))
+                    result = msgpack.loads(attr.socket.recv(), object_hook=lamarckian.util.serialize.decode, strict_map_key=False)
+                    for key, value in result.items():
+                        kwargs[key] = value
                     _attr.frame += 1
                 exp = await super().__call__(*args, **kwargs)
                 if self is attr.controller:
                     _attr = getattr(self, PATH_FUNC)
                     exp['state'] = _attr.state
-                    exp['discrete'] = [np.array([action])]
+                    for key, value in result.items():
+                        exp[key] = value
                     _attr.exp = exp
                     if 'message' in exp:
                         print(exp['message'])
@@ -91,7 +91,7 @@ def interact(mdp):
                 if self is attr.controller:
                     _attr = getattr(self, PATH_FUNC)
                     _attr.exp['reward'] = reward
-                    attr.socket.send(msgpack.dumps(('append', (_attr.exp, _attr.state), {}), default=lamarckian.util.rpc.util.encode))
+                    attr.socket.send(msgpack.dumps(('append', (_attr.exp, _attr.state), {}), default=lamarckian.util.serialize.encode))
                     attr.socket.recv()
                 return reward
 
@@ -103,7 +103,7 @@ def interact(mdp):
             socket = context.socket(zmq.REQ)
             socket.bind(f"tcp://*:{port}")
             encoding = self.describe()
-            proc = multiprocessing.get_context('spawn').Process(target=functools.partial(run, encoding, host=ray.services.get_node_ip_address(), port=port, **kwargs))
+            proc = multiprocessing.get_context('spawn').Process(target=functools.partial(run, encoding, host=ray.util.get_node_ip_address(), port=port, **kwargs))
             proc.start()
             setattr(self, PATH_FUNC, types.SimpleNamespace(
                 proc=proc,
@@ -114,7 +114,7 @@ def interact(mdp):
         def close(self):
             super().close()
             attr = getattr(self, PATH_FUNC)
-            attr.socket.send(msgpack.dumps((None, (), {}), default=lamarckian.util.rpc.util.encode))
+            attr.socket.send(msgpack.dumps((None, (), {}), default=lamarckian.util.serialize.encode))
             attr.socket.recv()
             attr.proc.join()
 

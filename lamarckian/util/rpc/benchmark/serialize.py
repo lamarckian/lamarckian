@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ def main():
     for cmd in sum(args.modify, []):
         lamarckian.util.config.modify(config, cmd)
     logging.config.dictConfig(config['logging'])
-    serializer = lamarckian.util.rpc.util.Serializer(glom.glom(config, 'rpc.serializer'))
+    serializer = lamarckian.util.serialize.Serializer(glom.glom(config, 'rpc.serializer'))
     size = humanfriendly.parse_size(args.size)
     data = os.urandom(size)
     try:
@@ -43,7 +43,7 @@ def main():
             for n in range(args.total):
                 serializer.serialize(data)
     except KeyboardInterrupt:
-        logging.info(n / duration.get())
+        logging.info(n / duration())
 
 
 def make_args():

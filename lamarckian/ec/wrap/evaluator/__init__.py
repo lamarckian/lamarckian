@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -82,7 +82,7 @@ def variator(evaluator):
                 individual['result'] = self.reduce(individual['results'])
                 individual['digest'] = hashlib.md5(pickle.dumps(decision)).hexdigest()
                 individual['cost'] = dict(evaluate=self.cost - cost)
-                individual['duration'] = dict(evaluate=duration.get())
+                individual['duration'] = dict(evaluate=duration())
                 individual['age'] = individual.get('age', 0) + sum(individual['cost'].values())
             return population
 
@@ -95,7 +95,7 @@ def variator(evaluator):
             try:
                 setproctitle.setproctitle(f"{title}.train")
                 episode = 0
-                with contextlib.closing(attr.stopper()) as stopper, contextlib.closing(self.training()), contextlib.closing(lamarckian.util.duration.Measure()) as duration, (torch.autograd.detect_anomaly() if attr.detect else contextlib.closing(types.SimpleNamespace(close=lambda: None))):
+                with contextlib.closing(self.training()), contextlib.closing(attr.stopper()) as stopper, contextlib.closing(lamarckian.util.duration.Measure()) as duration, (torch.autograd.detect_anomaly() if attr.detect else contextlib.closing(types.SimpleNamespace(close=lambda: None))):
                     for iteration in range(np.iinfo(np.int).max):
                         outcome = self()
                         episode += len(outcome['results'])
@@ -104,7 +104,7 @@ def variator(evaluator):
                 individual['decision'] = decision = copy.deepcopy(stopper.get())
                 individual['digest'] = hashlib.md5(pickle.dumps(decision)).hexdigest()
                 individual['cost'], cost = dict(train=self.cost - cost), self.cost
-                individual['duration'] = dict(train=duration.get())
+                individual['duration'] = dict(train=duration())
                 individual['iteration'] = iteration
                 individual['episode'] = episode
                 if evaluate:
@@ -113,7 +113,7 @@ def variator(evaluator):
                         individual['results'] = stopper.evaluate()
                     individual['result'] = self.reduce(individual['results'])
                     individual['cost']['evaluate'], cost = self.cost - cost, self.cost
-                    individual['duration']['evaluate'] = duration.get()
+                    individual['duration']['evaluate'] = duration()
                 individual['age'] += sum(individual['cost'].values())
                 return individual
             # except:

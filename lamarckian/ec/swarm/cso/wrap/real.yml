@@ -1,0 +1,4 @@
+swarm:
+  create:
+    ${__extend__}:
+      - lamarckian.ec.swarm.cso.wrap.real()

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -35,14 +35,14 @@ def hidden1(module):
                     self.config = config
                     channel = Channel(inputs)
                     self.linear = nn.Sequential(
-                        nn.Linear(channel(), channel.next(128)),
+                        nn.Linear(int(channel), channel(128)),
                         nn.LeakyReLU(),
                     )
-                    channel.channels += outputs
+                    channel.value += outputs
                     self.value = nn.Sequential(
-                        nn.Linear(channel(), channel.next(64)),
+                        nn.Linear(int(channel), channel(64)),
                         nn.LeakyReLU(),
-                        nn.Linear(channel(), 1),
+                        nn.Linear(int(channel), 1),
                     )
 
                 def forward(self, action, *inputs):

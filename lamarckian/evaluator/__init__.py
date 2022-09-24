@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,24 +18,18 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import inspect
 import types
-import random
+import contextlib
 import logging
 
-import numpy as np
 import torch
 import glom
 import ray
 
 import lamarckian
 from . import wrap, record
-from typing import Dict
+
 
 class Evaluator(object):
-    """
-    Base class for evolutionary/RL algorithms.
-
-    :param state: The run-time state to resume from.
-    """
     def __init__(self, state={}, **kwargs):
         self.kwargs = kwargs
         self.cost = state.get('cost', 0)
@@ -47,41 +41,28 @@ class Evaluator(object):
     def __len__(self):
         return 1
 
-    def seed(self, seed) -> None:
+    def seed(self, seed):
         pass
 
-    def describe(self) -> Dict:
+    def describe(self):
         return {}
 
-    def initialize(self) -> Dict:
-        """Initialize the algorithm, e.g., setup hyperparameters and generate initial population."""
+    def initialize(self):
         return {}
 
-    def set(self, decision: Dict) -> None:
-        """
-        :param decision: The decision (solution) that uniquely specifies an algorithm instance.
-        """
+    def set(self, decision):
         pass
 
-    def get(self) -> Dict:
+    def get(self):
         return {}
 
     def training(self):
-        """
-        Setup a context that will be used by contextlib.closing() to maanage the resources.
-        """
         return types.SimpleNamespace(close=lambda: None)
 
     def __call__(self):
-        """
-        Main execution process of the algorithm.
-        """
         raise NotImplementedError()
 
     def evaluate(self):
-        """
-        Evaluate an individual policy/the current population.
-        """
         raise NotImplementedError()
 
     def reduce(self, *args, **kwargs):
@@ -118,16 +99,24 @@ class Saver(object):
             self.root = os.path.expanduser(os.path.expandvars(root))
             self.keep = glom.glom(kwargs['config'], 'model.keep', default=0)
 
+    def close(self):
+        self()
+
     def __call__(self):
         if hasattr(self, 'root'):
             os.makedirs(self.root, exist_ok=True)
             path = os.path.join(self.root, f'{self.evaluator.cost}.pth')
-            logging.info(f"save {path}")
-            torch.save(self.evaluator.__getstate__(), path)
-            if self.keep > 0:
-                lamarckian.util.file.tidy(self.root, self.keep)
-            else:
-                logging.warning(f'keep all models in {self.root}')
+            if not os.path.exists(path):
+                with contextlib.closing(lamarckian.util.DelayNewline()) as logger:
+                    logging.info(f"save {path}")
+                    state = self.evaluator.__getstate__()
+                    logger(' ... ')
+                    torch.save(state, path)
+                    logger('done')
+                if self.keep > 0:
+                    lamarckian.util.file.tidy(self.root, self.keep)
+                else:
+                    logging.warning(f'keep all models in {self.root}')
 
     @staticmethod
     def counter(**kwargs):

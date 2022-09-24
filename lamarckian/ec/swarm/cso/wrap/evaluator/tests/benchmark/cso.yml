@@ -1,0 +1,8 @@
+extend:
+  - ${ROOT}/lamarckian.yml
+  - ${ROOT}/lamarckian/benchmark/real/shubert.yml
+  - ${ROOT}/lamarckian/swarm/cso/real/cso.yml
+  - ${ROOT}/lamarckian/swarm/wrap/evaluator/cso/real/cso.yml
+  - ${ROOT}/lamarckian/ec/crossover/real/useless.yml
+  - ${ROOT}/lamarckian/ec/mutation/real/useless.yml
+seed: 0

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,9 +19,8 @@ import types
 import contextlib
 import asyncio
 
-import numpy as np
-
-from . import rollout, util, wrap
+import lamarckian
+from . import rollout, util, wrap, nash
 
 
 class MDP(object):
@@ -78,18 +77,21 @@ class MDP(object):
         pass
 
 
-def evaluate(mdp, me, agent, opponents, loop=asyncio.get_event_loop()):
+def evaluate(mdp, me, agent, opponents):
+    loop = asyncio.get_event_loop()
     cost = 0
     results = []
     for seed, opponent in enumerate(opponents):
         with contextlib.closing(mdp.evaluating(seed)):
             battle = mdp.reset(me, *opponent, loop=loop)
             with contextlib.closing(battle):
-                costs = loop.run_until_complete(asyncio.gather(
+                task = asyncio.gather(
                     rollout.get_cost(battle.controllers[0], agent),
                     *[rollout.get_cost(controller, agent) for controller, agent in zip(battle.controllers[1:], opponent.values())],
                     *battle.ticks,
-                ))[:len(battle.controllers)]
+                )
+                task.add_done_callback(lamarckian.util.print_exc)
+                costs = loop.run_until_complete(task)[:len(battle.controllers)]
                 cost += max(costs)
                 results.append(battle.controllers[0].get_result())
     return cost, results

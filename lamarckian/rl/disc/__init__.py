@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ import os
 import numpy as np
 import torch
 import glom
+import humanfriendly
 
 import lamarckian
 from .. import RL, ppo, wrap as _wrap
@@ -45,7 +46,7 @@ class Learner(ppo.Learner):
     def estimate(self, old, new):
         with torch.no_grad():
             ratio_ = new['ratio'].clamp(max=self.hparam['clip_trace']).mean(-1).unsqueeze(-1)
-            discount = torch.logical_not(old['done']).float() * self.discount
+            discount = torch.logical_not(old['done']).to(old['reward'].dtype) * self.discount
             advantage = torch.stack(gae_v(old['reward'], new['critic'], new['critic_'], discount, self.gae, ratio_))
             credit = new['critic'] + ratio_ * advantage
         return dict(advantage=advantage, credit=credit)
@@ -55,7 +56,6 @@ class Learner(ppo.Learner):
 class _Evaluator(Learner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
         self.saver = lamarckian.evaluator.Saver(self)
         self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
@@ -68,16 +68,8 @@ class _Evaluator(Learner):
             lambda *args, **kwargs: self.profiler(self.cost),
         )
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
-        self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
             lambda *args, **kwargs: lamarckian.rl.record.Rollout.new(**kwargs)(self.cost, self.get_blob()),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **self.results()),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
@@ -85,48 +77,50 @@ class _Evaluator(Learner):
                 **{f'{NAME}/loss': outcome['loss'].item()},
                 **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
                 **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
+                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(self.encoding['blob']['reward'], outcome['loss_critic'])},
+                **self.results(),
+                **{f'{NAME}/{key}': value for key, value in ppo.record.get_ratio(self, outcome).items()},
+                **{f'{NAME}/broadcast/{key}': value for key, value in getattr(self.broadcaster, 'profile', {}).items()},
             }),
         )
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda outcome: lamarckian.util.record.Scalar(self.cost, **ppo.record.get_ratio(self, outcome, NAME)),
-        )
-        self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
-            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, self.get_blob()),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value.cpu().numpy() for key, value in self.model.state_dict().items()}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
         self.recorder.put(lamarckian.rl.record.Graph(f"{NAME}/graph", self.cost))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.cpu().numpy().nbytes for value in self.model.state_dict().values()))}))
         self.recorder.put(lamarckian.util.record.Text(self.cost, topology=repr(self.rpc_all)))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)
         return super().training()
 
+    @lamarckian.util.duration.wrap('step')
     def __call__(self):
         outcome = super().__call__()
         self.results += outcome['results']
         self.recorder(outcome)
         return outcome
 
-    @lamarckian.util.duration.wrap(f"{NAME}/sync_blob")
-    def sync_blob(self, *args, **kwargs):
-        return super().sync_blob(*args, **kwargs)
 
-
-class Evaluator(_Evaluator):
+class Evaluator(_Evaluator):  # ray's bug
     pass
 
 
+@ppo.wrap.record.ddp.topology
+@ppo.wrap.record.ddp.stale(NAME)
+@ppo.wrap.record.ddp.broadcaster(NAME)
 class DDP(lamarckian.rl.wrap.remote.ddp(_wrap.remote.training_switch(Learner))(RL)):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
+        broadcaster0 = glom.glom(kwargs['config'], 'ddp.broadcaster0', default=True)
+        super().__init__(*args, **kwargs, broadcaster=not broadcaster0)
+        if broadcaster0:
+            self.ray.get(self.learners[0].create_broadcaster.remote(self.actors))
         self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
         self.saver = lamarckian.evaluator.Saver(self)
         self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
@@ -139,16 +133,8 @@ class DDP(lamarckian.rl.wrap.remote.ddp(_wrap.remote.training_switch(Learner))(R
             lambda *args, **kwargs: self.profiler(self.cost),
         )
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
-        self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
             lambda *args, **kwargs: lamarckian.rl.record.Rollout.new(**kwargs)(self.cost, self.get_blob()),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **self.results()),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
@@ -156,23 +142,32 @@ class DDP(lamarckian.rl.wrap.remote.ddp(_wrap.remote.training_switch(Learner))(R
                 **{f'{NAME}/loss': outcome['loss'].item()},
                 **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
                 **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
+                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(self.encoding['blob']['reward'], outcome['loss_critic'])},
+                **self.results(),
+                **{f'{NAME}/{key}': value for key, value in ppo.record.get_ratio(self, outcome).items()},
             }),
         )
+        encoding = self.encoding['blob']
+        model = encoding['models'][0]
+        module = lamarckian.evaluator.parse(*model['cls'], **kwargs)
+        keys = list(module(**model, **kwargs, reward=encoding['reward']).state_dict().keys())
+        blob = self.get_blob()
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.nbytes for value in blob))}))
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda outcome: lamarckian.util.record.Scalar(self.cost, **ppo.record.get_ratio(self, outcome, NAME)),
+            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value for key, value in zip(keys, self.get_blob())}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)
         return super().training()
 
+    @lamarckian.util.duration.wrap('step')
     def __call__(self):
         outcome = super().__call__()
         self.results += outcome['results']

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,6 +19,8 @@ import inspect
 import types
 import random
 import numbers
+import time
+from timeit import default_timer as timer
 
 import numpy as np
 import glom
@@ -165,16 +167,19 @@ def render(mdp):
     class MDP(mdp):
         class Controller(mdp.Controller):
             def get_state(self):
-                attr = getattr(self.mdp, PATH_FUNC)
                 state = super().get_state()
-                if self.me == attr.me:
+                if hasattr(self, PATH_FUNC):
                     image = self.mdp.render()
                     if isinstance(image, np.ndarray):
                         state['image'] = imagecodecs.jpeg_encode(image.copy())
-                        if attr.show:
+                        interval = getattr(self.mdp, PATH_FUNC)
+                        if interval:
                             try:
-                                cv2.imshow('g78', image)
+                                cv2.imshow(NAME_FUNC, image)
                                 cv2.waitKey(1)
+                                t = timer()
+                                time.sleep(max(interval - (t - getattr(self, PATH_FUNC)), 0))
+                                setattr(self, PATH_FUNC, t)
                             except:
                                 pass
                 return state
@@ -182,8 +187,12 @@ def render(mdp):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            setattr(self, PATH_FUNC, types.SimpleNamespace(
-                me=glom.glom(kwargs['config'], 'rl.me', default=0),
-                show=glom.glom(kwargs['config'], 'mdp.render.show', default=False),
-            ))
+            fps = eval(str(glom.glom(kwargs['config'], 'mdp.render.fps', default=0)))
+            setattr(self, PATH_FUNC, 1 / fps if fps else 0)
+
+        def reset(self, *args, **kwargs):
+            battle = super().reset(*args, **kwargs)
+            controller = battle.controllers[0]
+            setattr(controller, PATH_FUNC, timer())
+            return battle
     return MDP

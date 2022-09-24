@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@ import multiprocessing
 import threading
 import queue
 import subprocess
+import signal
 import datetime
 import time
 import tarfile
@@ -105,14 +106,16 @@ class Recorder(object):
 
     @staticmethod
     def new(**kwargs):
-        if kwargs.get('root', None) is not None:
+        if kwargs.get('recorder', None) is not None:
+            return lamarckian.util.recorder.proxy.Client(**kwargs)
+        elif kwargs.get('root', None) is not None:
             return lamarckian.util.recorder.Process(**kwargs)
         else:
             return lamarckian.util.recorder.Fake()
 
 
 class Process(Recorder):
-    class Server(object):
+    class Worker(object):
         def __init__(self, queue, **kwargs):
             self.queue = queue
             self.kwargs = kwargs
@@ -192,7 +195,7 @@ class Process(Recorder):
             raise e
 
     def close(self):
-        self.process.terminate()
+        self.process.kill()
         self.process.join()
 
     def put(self, record):
@@ -203,21 +206,28 @@ class Process(Recorder):
 
     @staticmethod
     def run(queue, *args, **kwargs):
+        try:
+            import prctl
+            prctl.set_pdeathsig(signal.SIGKILL)
+        except ImportError:
+            traceback.print_exc()
         setproctitle.setproctitle('recorder')
         logging.info(f"recorder CUDA devices: {torch.cuda.device_count()}")
         try:
-            server = Process.Server(queue, *args, **kwargs)
+            worker = Process.Worker(queue, *args, **kwargs)
             queue.put(None)
         except Exception as e:
             queue.put((e, traceback.format_exc()))
             raise
         while True:
             try:
-                if isinstance(server(), Quit):
+                if isinstance(worker(), Quit):
                     break
+            except KeyboardInterrupt:
+                break
             except:
                 traceback.print_exc()
-        server.close()
+        worker.close()
 
 
 class Thread(Recorder):
@@ -247,3 +257,6 @@ class Thread(Recorder):
         matplotlib.use('Agg')
         asyncio.set_event_loop(asyncio.new_event_loop())
         return Process.run(queue, *args, **kwargs)
+
+
+from . import proxy

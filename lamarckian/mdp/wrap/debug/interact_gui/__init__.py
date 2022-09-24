@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ import inspect
 import functools
 import threading
 
+import torch
 import glom
 import zmq
 import msgpack
@@ -29,99 +30,60 @@ import lamarckian
 from lamarckian.mdp.trajectory import widget
 
 
-class Widget(QtWidgets.QDialog):
-    signal_reset = QtCore.pyqtSignal(dict)
-    signal_append = QtCore.pyqtSignal(dict, dict)
-    signal_set_default = QtCore.pyqtSignal(int, int)
+def slice(role, **kwargs):
+    for key in 'discrete continuous'.split():
+        if key in kwargs:
+            kwargs[key] = [torch.moveaxis(action, -1, 0)[role] for action in kwargs[key]]
+    for key in 'error reward'.split():
+        kwargs[key] = kwargs[key][role]
+    return kwargs
 
-    def __init__(self, encoding, **kwargs):
+
+class WidgetRole(QtWidgets.QWidget):
+    def __init__(self, parent, role, encoding, **kwargs):
         super().__init__()
+        self.parent = parent
+        self.role = role
         self.encoding = encoding
         self.kwargs = kwargs
-        self.event_action = threading.Event()
         layout = QtWidgets.QVBoxLayout(self)
         self.widget_action = widget.Action(self, encoding, **kwargs)
         self.widget_action.setFocusPolicy(QtCore.Qt.NoFocus)
         layout.addWidget(self.widget_action)
-        layout.addLayout(self.create_layout1())
-        self.widget_state = widget.State(self, encoding, **kwargs)
-        layout.addWidget(self.widget_state)
-        self.widget_frame = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
-        self.widget_frame.setMinimum(0)
-        self.widget_frame.setMaximum(0)
-        layout.addWidget(self.widget_frame)
-        self.widget_frame.setFocus()
-        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            signal = getattr(self, f"signal_{name}", None)
-            if signal is not None:
-                signal.connect(method)
-        self.widget_frame.valueChanged.connect(self.on_frame)
-        self.widget_action.cellClicked.connect(lambda row, column: self.widget_frame.setValue(column))
+        layout.addWidget(self.create_widgets1(role))
         for i in range(self.widget_reward.count()):
-            self.widget_reward.widget(i).figure.canvas.mpl_connect('button_press_event', self.on_click)
+            self.widget_reward.widget(i).figure.canvas.mpl_connect('button_press_event', lambda event: None if event.xdata is None else self.on_frame(int(event.xdata)))
 
-    def create_layout1(self):
+    def create_widgets1(self, role):
         me = self.kwargs.get('me', 0)
         model = self.encoding['blob']['models'][me]
         names = model['discrete'][0]
-        layout = QtWidgets.QHBoxLayout()
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.widget_pred = QtWidgets.QTableWidget()
         self.widget_pred.setRowCount(len(names))
         self.widget_pred.verticalHeader().hide()
         self.widget_pred.setColumnCount(1)
         self.widget_pred.horizontalHeader().hide()
         keys = glom.glom(self.kwargs['config'], 'mdp.debug.interact.shortcut', default=[])
-        for i, (name, key) in enumerate(zip(names, keys + [None] * (len(names) - len(keys)))):
+        width = 0
+        for action, (name, key) in enumerate(zip(names, keys + [None] * (len(names) - len(keys)))):
             cell = QtWidgets.QPushButton(name)
-            cell.clicked.connect(functools.partial(self.set_action, i))
+            cell.clicked.connect(functools.partial(self.set_action, role, action))
             cell.setShortcut(str(key))
-            self.widget_pred.setCellWidget(i, 0, cell)
-        self.widget_pred.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
-        layout.addWidget(self.widget_pred)
-        self.widget_reward = widget.Reward(self, self.encoding, **self.kwargs)
+            self.widget_pred.setCellWidget(action, 0, cell)
+            width = max(cell.width(), width)
+        self.widget_pred.setFixedWidth(width)
+        # self.widget_pred.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
+        splitter.addWidget(self.widget_pred)
+        self.widget_reward = widget.Reward(self, self.encoding, self.widget_action.trajectory, **self.kwargs)
         # self.widget_reward.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        layout.addWidget(self.widget_reward)
-        return layout
+        splitter.addWidget(self.widget_reward)
+        return splitter
 
-    def reset(self, state):
-        self.widget_action.set([])
-        self.widget_frame.setMaximum(0)
-        exp = dict(state=state)
-        self.widget_state.guess(exp)
-        self.widget_state(exp, state=state)
-
-    def append(self, exp, state_):
-        self.widget_action.append(exp)
-        self.state_ = state_
-        value = len(self.widget_action) - 1
-        self.widget_frame.setMaximum(value)
-        self.widget_frame.setValue(value)
-        self.widget_reward.plot(self.widget_action.trajectory)
-
-    def set_default(self, frame, action):
-        assert 0 <= action < self.widget_pred.rowCount(), (action, self.widget_pred.rowCount())
-        for i in range(self.widget_pred.rowCount()):
-            cell = self.widget_pred.cellWidget(i, 0)
-            cell.setDefault(False)
-        cell = self.widget_pred.cellWidget(action, 0)
-        cell.setDefault(True)
-        cell.setFocus()
-        self.setWindowTitle(f"{frame}: {cell.text()}")
-
-    def set_action(self, action):
-        for i in range(self.widget_pred.rowCount()):
-            cell = self.widget_pred.cellWidget(i, 0)
-            if cell.isDefault():
-                cell.setFocus()
-                break
-        self.action = action
-        self.event_action.set()
-
-    def __call__(self, frame, action):
-        self.signal_set_default.emit(frame, action)
-        self.event_action.clear()
-        self.event_action.wait()
-        return self.action
+    def set_action(self, role, action):
+        self.parent.action['role'] = role
+        torch.moveaxis(self.parent.action['discrete'][0], -1, 0)[role] = action
+        self.parent.event_action.set()
 
     def on_frame(self, frame):
         trajectory = self.widget_action.trajectory
@@ -129,24 +91,76 @@ class Widget(QtWidgets.QDialog):
         try:
             exp_ = trajectory[frame + 1]
         except IndexError:
-            exp_ = dict(state=self.state_)
-        self.widget_state(exp, **exp_)
+            exp_ = dict(state=self.parent.state_)
+        self.parent.widget_state(exp, **exp_)
         self.widget_action.selectColumn(frame)
         if len(self.widget_reward) == len(trajectory):
             self.widget_reward(frame)
 
-    def on_click(self, event):
-        if event.xdata is not None:
-            frame = int(event.xdata)
-            if 0 <= frame < len(self.widget_action.trajectory):
-                self.widget_frame.setValue(frame)
+
+class Widget(QtWidgets.QWidget):
+    signal_reset = QtCore.pyqtSignal(dict)
+    signal_append = QtCore.pyqtSignal(dict, dict)
+    signal_set_default = QtCore.pyqtSignal(int, dict)
+
+    def __init__(self, encoding, **kwargs):
+        super().__init__()
+        self.encoding = encoding
+        self.kwargs = kwargs
+        self.event_action = threading.Event()
+        layout = QtWidgets.QVBoxLayout(self)
+        self.widget_roles = QtWidgets.QTabWidget()
+        for role in range(self.encoding['blob'].get('roles', 1)):
+            self.widget_roles.addTab(WidgetRole(self, role, encoding, **kwargs), str(role))
+        layout.addWidget(self.widget_roles)
+        self.widget_state = widget.State(self, encoding, **kwargs)
+        layout.addWidget(self.widget_state)
+        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            signal = getattr(self, f"signal_{name}", None)
+            if signal is not None:
+                signal.connect(method)
+
+    def reset(self, state):
+        exp = dict(state=state)
+        for role in range(self.widget_roles.count()):
+            widget = self.widget_roles.widget(role)
+            widget.widget_action.set([])
+        self.widget_state.guess(exp)
+        self.widget_state(exp, state=state)
+
+    def append(self, exp, state_):
+        self.state_ = state_
+        for role in range(self.widget_roles.count()):
+            widget = self.widget_roles.widget(role)
+            widget.widget_action.append(slice(role, **{key: value for key, value in exp.items() if key not in {'role'}}))
+        widget = self.widget_roles.currentWidget()
+        widget.widget_reward.plot()
+        widget.on_frame(len(widget.widget_action) - 1)
+
+    def set_default(self, frame, action):
+        self.action = action
+        for role, discrete in enumerate(torch.unbind(action['discrete'][0], -1)):
+            discrete = discrete.item()
+            widget = self.widget_roles.widget(role)
+            for i in range(widget.widget_pred.rowCount()):
+                cell = widget.widget_pred.cellWidget(i, 0)
+                cell.setDefault(discrete == i)
+            cell = widget.widget_pred.cellWidget(discrete, 0)
+            self.widget_roles.setTabText(role, cell.text())
+        self.setWindowTitle(str(frame))
+
+    def __call__(self, frame, **kwargs):
+        self.signal_set_default.emit(frame, kwargs)
+        self.event_action.clear()
+        self.event_action.wait()
+        return self.action
 
 
 def loop(widget, socket):
     while True:
-        name, args, kwargs = msgpack.loads(socket.recv(), object_hook=lamarckian.util.rpc.util.decode, strict_map_key=False)
+        name, args, kwargs = msgpack.loads(socket.recv(), object_hook=lamarckian.util.serialize.decode, strict_map_key=False)
         if name is None:
-            socket.send(msgpack.dumps(widget.close(), default=lamarckian.util.rpc.util.encode))
+            socket.send(msgpack.dumps(widget.close(), default=lamarckian.util.serialize.encode))
             break
         try:
             signal = getattr(widget, f"signal_{name}")
@@ -155,7 +169,7 @@ def loop(widget, socket):
         except AttributeError:
             method = getattr(widget, name)
             result = method(*args, **kwargs)
-        socket.send(msgpack.dumps(result, default=lamarckian.util.rpc.util.encode))
+        socket.send(msgpack.dumps(result, default=lamarckian.util.serialize.encode))
 
 
 def run(encoding, **kwargs):

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -189,35 +189,23 @@ class MDP(_MDP):
         )
 
     async def tick(self, controllers):
-        try:
-            while True:
-                actions = [await controller.queue.action.get() for controller in controllers]
-                states, rewards, done, info = self.env._step(actions)
-                done = done or self.frame >= self.length
-                for controller, state, reward in zip(controllers, states, rewards):
-                    controller.state = state
-                    await controller.queue.exp.put(dict(reward=reward, done=done))
-                self.frame += 1
-                if done:
-                    break
-        except GeneratorExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
+        while True:
+            actions = [await controller.queue.action.get() for controller in controllers]
+            states, rewards, done, info = self.env._step(actions)
+            done = done or self.frame >= self.length
+            for controller, state, reward in zip(controllers, states, rewards):
+                controller.state = state
+                await controller.queue.exp.put(dict(reward=reward, done=done))
+            self.frame += 1
+            if done:
+                break
 
     async def rule(self, controller):
-        try:
-            while True:
-                action = agent.rule(self, controller.me).value
-                exp = await controller(discrete=[action])
-                if exp['done']:
-                    break
-        except GeneratorExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
+        while True:
+            action = agent.rule(self, controller.me).value
+            exp = await controller(discrete=[action])
+            if exp['done']:
+                break
 
     def get_arena(self):
         return self.env._game._arena

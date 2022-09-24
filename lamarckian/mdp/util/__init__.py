@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import asyncio
 
 
-def wait(task, tasks, loop=asyncio.get_event_loop()):
+def wait(task, tasks, loop):
     pending = {task} | tasks
     while True:
         done, pending = loop.run_until_complete(asyncio.wait(pending, loop=loop, return_when=asyncio.FIRST_COMPLETED))

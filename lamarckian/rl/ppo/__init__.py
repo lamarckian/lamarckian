@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,123 +19,63 @@ import os
 import math
 import contextlib
 import types
-import pickle
-import hashlib
+import ctypes
 import threading
-import queue
-import traceback
-import asyncio
+import time
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import glom
+import zmq
+import humanfriendly
+import psutil
+import filelock
+import port_for
 
 import lamarckian
-from lamarckian.mdp import rollout
-from .. import RL, Remote, ac, wrap as _wrap
+from . import util, wrap, record
+from .. import ac
 
 NAME = os.path.basename(os.path.dirname(__file__))
 
-from . import wrap, record
 
+@wrap.rpc.all
+@lamarckian.util.rpc.wrap.any
+class _Actor(ac.Actor):
+    DIM = 1
 
-class Prefetcher(object):
-    def __init__(self, receive, batch_size, dim=0, capacity=1):
-        self.receive = receive
-        self.batch_size = batch_size
-        self.dim = dim
-        self.results = []
-        if capacity > 0:
-            self.queue = queue.Queue(capacity)
-        else:
-            self.cost = 0
-            tensors = lamarckian.rl.make_batch(self.receive_tensor, batch_size, dim)
-
-            def get(*args, **kwargs):
-                cost, tensors = self.queue.data
-                self.queue.data = (0, tensors)
-                return cost, tensors
-            self.queue = types.SimpleNamespace(
-                data=(self.cost, tensors),
-                put=lambda data, *args, **kwargs: setattr(self.queue, 'data', data),
-                get=get,
-            )
-        self.running = True
-        self.thread = threading.Thread(target=self.receiving)
-        self.thread.start()
-
-    def close(self):
-        self.running = False
-        thread = threading.Thread(target=self.thread.join)
-        thread.start()
-        while thread.is_alive():
-            try:
-                self.queue.get(block=False)
-            except queue.Empty:
-                pass
-        thread.join()
-
-    def receive_tensor(self):
-        cost, tensors, results, iteration = self.receive()
-        self.cost += cost
-        self.results += results
-        return tensors
-
-    def receiving(self):
-        try:
-            while self.running:
-                self.cost = 0
-                tensors = lamarckian.rl.make_batch(self.receive_tensor, self.batch_size, self.dim)
-                self.queue.put((self.cost, tensors))
-        except Exception as e:
-            traceback.print_exc()
-            self.queue.put(e)
-
-    def __next__(self):
-        result = self.queue.get()
-        if isinstance(result, Exception):
-            raise result
-        else:
-            cost, tensors = result
-            results, self.results = self.results, []
-            return cost, tensors, results
-
-
-class Truncator(lamarckian.rl.Truncator):
-    def __init__(self, rl, step, cast=rollout.cast):
-        super().__init__(rl, step, cast=cast)
-        assert 0 < step < np.iinfo(np.int).max, step
-        self.step = step
-
-    def __next__(self):
-        trajectory = []
-        results = []
-        while len(trajectory) < self.step:
-            if self.done:
-                self._reset()
-            task = asyncio.Task(rollout.get_trajectory(self.battle.controllers[0], self.agent, step=self.step - len(trajectory), cast=self.cast), loop=self.loop)
-            lamarckian.mdp.util.wait(task, self.tasks, self.loop)
-            trajectory1, exp = task.result()
-            trajectory += trajectory1
-            self.done = trajectory[-1]['done']
-            if self.done:
-                result = self.battle.controllers[0].get_result()
-                if self.opponent:
-                    result['digest_opponent_train'] = hashlib.md5(pickle.dumps(list(self.opponent.values()))).hexdigest()
-                results.append(result)
-                # self.loop.run_until_complete(asyncio.gather(*self.tasks))
-        assert len(trajectory) == self.step, (len(trajectory), self.step)
-        return trajectory, exp, results
-
-
-class Actor(lamarckian.util.rpc.wrap.gather(lamarckian.util.rpc.wrap.any(lamarckian.util.rpc.wrap.all(ac.Actor)))):
     def __init__(self, *args, **kwargs):
         torch.set_num_threads(1)
-        super().__init__(*args, **kwargs)
+        gather = kwargs.pop('gather')
+        super().__init__(*args, **{**kwargs, **dict(device='cpu')})
+        self.truncator.close()
+        self.truncator = util.Truncator(self, self.hparam['truncation'])
+        self.iteration = 0
+        assert not hasattr(self, 'gather')
+        self.gather = types.SimpleNamespace(running=True, training=threading.Event(), busy=True)
+        self.gather.thread = threading.Thread(target=self.sending, args=(gather['url'], lamarckian.util.serialize.SERIALIZE[gather['serializer']]))
+        self.gather.thread.start()
 
-    def create_truncator(self):
-        return Truncator(self, self.hparam['truncation'])
+    def close(self):
+        self.gather.running = False
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_long(self.gather.thread.ident),
+            ctypes.py_object(SystemExit),
+        )
+        super().close()
+        self.gather.thread.join()
+
+    def training(self):
+        training = super().training()
+        self.gather.training.set()
+
+        def close():
+            self.gather.training.clear()
+            while self.gather.busy:
+                time.sleep(0.1)
+            return training.close()
+        return types.SimpleNamespace(close=close)
 
     def rollout(self):
         return next(self.truncator)
@@ -144,23 +84,44 @@ class Actor(lamarckian.util.rpc.wrap.gather(lamarckian.util.rpc.wrap.any(lamarck
         self.set_blob(blob)
         self.iteration = iteration
 
+    def get_iteration(self):
+        return self.iteration
+
     def to_tensor(self, trajectory, exp):
         tensors = super().to_tensor(trajectory, exp)
         tensors = {key: [t.unsqueeze(1) for t in value] if isinstance(value, (tuple, list)) else value.unsqueeze(1) for key, value in tensors.items()}
         tensors['inputs'] = tuple(t.unsqueeze(1) for t in map(torch.cat, zip(*[exp['inputs'] for exp in trajectory + [exp]])))
         return tensors
 
-    def gather(self):
-        with torch.no_grad():
-            trajectory, exp, results = self.rollout()
-            cost = sum(exp.get('cost', 1) for exp in trajectory)
-            tensors = self.to_tensor(trajectory, exp)
-            return cost, tensors, results, self.iteration
+    def sending(self, url, serialize):
+        compact = glom.glom(self.kwargs['config'], 'rl.ppo.compact', default=1)
+        assert compact > 0, compact
+        context = zmq.Context()
+        with torch.no_grad(), contextlib.closing(context.socket(zmq.REQ)) as socket:
+            socket.connect(url)
+            recv = socket.recv
+            socket.recv = lambda: setattr(socket, 'recv', recv)
+            while self.gather.running:
+                self.gather.training.wait()
+                self.gather.busy = True
+                gather = util.Gather()
+                for _ in range(compact):
+                    trajectory, exp, results = self.rollout()
+                    gather(sum(exp.get('cost', 1) for exp in trajectory), self.to_tensor(trajectory, exp), results)
+                self.gather.busy = False
+                tensors = {key: lamarckian.rl.cat([tensors[key] for tensors in gather.tensors], self.DIM) for key in gather.tensors[0]}
+                socket.recv()
+                socket.send(serialize((gather.cost, tensors, gather.results, self.get_iteration())))
+            socket.recv()
+        context.term()
 
 
-class Learner(Remote):
+class Actor(_Actor):  # ray's bug
+    pass
+
+
+class Learner(lamarckian.rl.Learner):
     Actor = Actor
-    DIM = 1
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -168,51 +129,67 @@ class Learner(Remote):
         for key in 'policy critic entropy'.split():
             self.hparam.setup(f'weight_loss_{key}', glom.glom(kwargs['config'], f"rl.ac.weight_loss.{key}"), np.float)
         self.loss_critic = getattr(F, glom.glom(kwargs['config'], 'rl.ac.loss_critic', default='mse_loss'))
-        self.rpc_broadcast = lamarckian.util.rpc.All(self.actors, **kwargs)
-        self.rpc_gather = lamarckian.util.rpc.Gather(self.rpc_all, **kwargs)
         self.iteration = 0
         self.hparam.setup('batch_size', glom.glom(kwargs['config'], 'train.batch_size'), np.int)
         self.hparam.setup('clip', glom.glom(kwargs['config'], f'rl.{NAME}.clip', default=np.finfo(np.float32).max), np.float)
         self.hparam.setup('reuse', glom.glom(kwargs['config'], f'rl.{NAME}.reuse', default=1), np.int)
         self.norm_advantage = eval('lambda advantage: ' + glom.glom(kwargs['config'], f'rl.ac.norm_advantage', default='advantage'))
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
+        if kwargs.get('broadcaster', True):
+            self.create_broadcaster(self.actors)
+        else:
+            self.broadcaster = util.broadcaster.Fake()
 
     def close(self):
-        self.rpc_broadcast.close()
-        self.rpc_gather.close()
+        self.prefetcher.close()
+        self.broadcaster.close()
         return super().close()
 
-    def sync_blob(self, blob):
-        return self.rpc_broadcast('set_blob_', blob, self.iteration)
+    def create_actors(self, parallel, *args, **kwargs):
+        try:
+            if 'ray' in self.kwargs or glom.glom(self.kwargs['config'], 'ray.local_mode', default=False) or not glom.glom(self.kwargs['config'], 'c.prefetcher', default=True):
+                raise ImportError()
+            from pylamarckian.rl.ppo import Prefetcher
+        except ImportError:
+            from .util import Prefetcher
+        with filelock.FileLock(lamarckian.util.rpc.util.LOCK_PORT):
+            port = port_for.select_random(glom.glom(self.kwargs['config'], 'rpc.ports', default=None))
+            self.prefetcher = Prefetcher(
+                f"tcp://*:{port}", 1, dim=self.Actor.DIM, device=self.device,
+                parallel=min(glom.glom(self.kwargs['config'], 'rl.ppo.prefetcher.parallel', default=psutil.cpu_count()), parallel),
+                serializer=glom.glom(self.kwargs['config'], 'rl.ppo.prefetcher.serializer', default=glom.glom(self.kwargs['config'], 'rpc.serializer')),
+                capacity=glom.glom(self.kwargs['config'], 'rl.ppo.prefetcher.capacity', default=1),
+            )
+        host = self.ray.util.get_node_ip_address()
+        gather = dict(url=f"tcp://{host}:{port}", serializer=self.prefetcher.serializer)
+        return super().create_actors(parallel, *args, **kwargs, remote=lambda cls, *args, **kwargs: cls.remote(*args, **kwargs, gather=gather))
 
-    def receive(self):
-        cost, tensors, results, iteration = self.rpc_gather()
-        tensors = lamarckian.rl.to_device(self.device, **tensors)
-        return cost, tensors, results, iteration
+    def create_broadcaster(self, actors):
+        try:
+            if 'ray' in self.kwargs or not glom.glom(self.kwargs['config'], 'c.broadcaster', default=False):
+                raise ImportError()
+            from .util import broadcaster
+            Broadcaster = getattr(broadcaster, glom.glom(self.kwargs['config'], 'rl.ppo.rpc_all', default=lamarckian.util.rpc.All.__name__))
+            self.broadcaster = Broadcaster(actors, self.model, lambda: self.iteration, **self.kwargs)
+        except ImportError:
+            self.broadcaster = util.broadcaster.Async(actors, lambda: (self.get_blob(), self.iteration), **self.kwargs)
+
+    def get_batch_size(self):
+        if self.Actor.DIM:
+            return math.ceil(self.hparam['batch_size'] / self.hparam['truncation'])
+        else:
+            return self.hparam['batch_size']
 
     def training(self):
         training = super().training()
-        self.broadcaster = lamarckian.rl.remote.Runner(lambda: self.sync_blob(self.get_blob()))
-        gathering = self.rpc_gather.gathering('gather')
-        if self.DIM:
-            batch_size = math.ceil(self.hparam['batch_size'] / self.hparam['truncation'])
-        else:
-            batch_size = self.hparam['batch_size']
-        self.prefetcher = Prefetcher(self.receive, batch_size, self.DIM, glom.glom(self.kwargs['config'], f"rl.{NAME}.prefetch", default=1))
-        encoding = self.describe()['blob']
-        self.discount = torch.FloatTensor([self.hparam[f"discount_{name}"] for name in encoding['reward']]).to(self.device)
-        self.gae = torch.FloatTensor([self.hparam[f"gae_{name}"] for name in encoding['reward']]).to(self.device)
-
-        def close():
-            self.prefetcher.close()
-            gathering.close()
-            self.broadcaster.close()
-            training.close()
-        return types.SimpleNamespace(close=close)
+        if hasattr(self.broadcaster, 'wrap_optimizer'):
+            self.broadcaster.wrap_optimizer(self.optimizer)
+        self.prefetcher.batch_size = self.get_batch_size()
+        self.discount = torch.FloatTensor([self.hparam[f"discount_{name}"] for name in self.encoding['blob']['reward']]).to(self.device)
+        self.gae = torch.FloatTensor([self.hparam[f"gae_{name}"] for name in self.encoding['blob']['reward']]).to(self.device)
+        return training
 
     def forward(self, old):
-        inputs = tuple(input.view(-1, *input.shape[2:]) for input in old['inputs'])
+        inputs = tuple(input.view(np.multiply.reduce(input.shape[:2]), *input.shape[2:]) for input in old['inputs'])
         outputs = self.model(*inputs)
         shape = old['inputs'][0].shape[:2]
         outputs = {key: value.view(*shape, *value.shape[1:]) if torch.is_tensor(value) else [t.view(*shape, *t.shape[1:]) for t in value] for key, value in outputs.items()}
@@ -225,7 +202,7 @@ class Learner(Remote):
                 legal = old.get('legal', [None] * len(outputs['discrete']))
                 assert len(legal) == len(outputs['discrete']), (len(legal), len(outputs['discrete']))
                 for legal, logits, discrete in zip(legal, outputs['discrete'], torch.unbind(old['discrete'], -1)):
-                    dist = agent.get_discrete_dist(logits[:-1], legal)
+                    dist = lamarckian.rl.Categorical(logits[:-1], legal)
                     logp.append(dist.log_prob(discrete))
                     entropy.append(dist.entropy())
             if 'continuous' in outputs:
@@ -239,21 +216,21 @@ class Learner(Remote):
 
     def estimate(self, old, new):
         with torch.no_grad():
-            discount = torch.logical_not(old['done']).float() * self.discount
+            discount = torch.logical_not(old['done']).to(old['reward'].dtype) * self.discount
             advantage = torch.stack(ac.gae(old['reward'], new['critic'], new['critic_'], discount, self.gae))
             credit = new['critic'] + advantage
         return dict(advantage=advantage, credit=credit)
 
     def get_loss_policy(self, old, new):
-        advantage = self.norm_advantage(new['advantage']).sum(-1)
         ratio = new['ratio'].mean(-1)
+        advantage = self.norm_advantage(new['advantage']).sum(-1).to(ratio.dtype)
         return -torch.min(
             advantage * ratio,
             advantage * ratio.clamp(min=1 - self.hparam['clip'], max=1 + self.hparam['clip']),
         )
 
     def get_loss_critic(self, old, new):
-        return self.loss_critic(new['critic'], new['credit'], reduction='none')
+        return self.loss_critic(new['critic'], new['credit'].to(new['critic'].dtype), reduction='none')
 
     def get_losses(self, old, new):
         policy = self.get_loss_policy(old, new)
@@ -261,8 +238,12 @@ class Learner(Remote):
         assert len(policy.shape) == 1 or len(policy.shape) + 1 == len(critic.shape), (policy.shape, critic.shape)
         return dict(policy=policy.mean(), entropy=-new['entropy'].mean()), critic.view(-1, critic.shape[-1]).mean(0)
 
+    def __next__(self):
+        return self.prefetcher()
+
     def __call__(self):
-        cost, old, results = next(self.prefetcher)
+        cost, old, results, _ = next(self)
+        assert cost > 0, cost
         self.cost += cost
         for _ in range(self.hparam['reuse']):
             self.optimizer.zero_grad()
@@ -281,7 +262,6 @@ class Learner(Remote):
 class _Evaluator(Learner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
         self.saver = lamarckian.evaluator.Saver(self)
         self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
@@ -294,16 +274,8 @@ class _Evaluator(Learner):
             lambda *args, **kwargs: self.profiler(self.cost),
         )
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
-        self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
             lambda *args, **kwargs: lamarckian.rl.record.Rollout.new(**kwargs)(self.cost, self.get_blob()),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **self.results()),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
@@ -311,24 +283,24 @@ class _Evaluator(Learner):
                 **{f'{NAME}/loss': outcome['loss'].item()},
                 **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
                 **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
+                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(self.encoding['blob']['reward'], outcome['loss_critic'])},
+                **self.results(),
+                **{f'{NAME}/{key}': value for key, value in record.get_ratio(self, outcome).items()},
+                **{f'{NAME}/broadcast/{key}': value for key, value in getattr(self.broadcaster, 'profile', {}).items()},
             }),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda outcome: lamarckian.util.record.Scalar(self.cost, **record.get_ratio(self, outcome, NAME)),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
-            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, self.get_blob()),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value.cpu().numpy() for key, value in self.model.state_dict().items()}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
         self.recorder.put(lamarckian.rl.record.Graph(f"{NAME}/graph", self.cost))
-        self.recorder.put(lamarckian.util.record.Text(self.cost, topology=repr(self.rpc_all)))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.cpu().numpy().nbytes for value in self.model.state_dict().values()))}))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, topology=repr(self.rpc_all), prefetcher=str(getattr(self.prefetcher, 'parallel', 1))))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)
@@ -340,63 +312,6 @@ class _Evaluator(Learner):
         self.recorder(outcome)
         return outcome
 
-    @lamarckian.util.duration.wrap(f"{NAME}/sync_blob")
-    def sync_blob(self, *args, **kwargs):
-        return super().sync_blob(*args, **kwargs)
 
-
-class Evaluator(_Evaluator):
+class Evaluator(_Evaluator):  # ray's bug
     pass
-
-
-class DDP(lamarckian.rl.wrap.remote.ddp(_wrap.remote.training_switch(Learner))(RL)):
-    def __init__(self, state={}, **kwargs):
-        super().__init__(state, **kwargs)
-        encoding = self.describe()['blob']
-        self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
-        self.saver = lamarckian.evaluator.Saver(self)
-        self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.save')),
-            lambda *args, **kwargs: self.saver(),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: self.profiler(self.cost),
-        )
-        self.recorder.register(
-            lamarckian.rl.record.Rollout.counter(**kwargs),
-            lambda *args, **kwargs: lamarckian.rl.record.Rollout.new(**kwargs)(self.cost, self.get_blob()),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **self.results()),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda outcome: lamarckian.util.record.Scalar(self.cost, **{
-                **{f'{NAME}/loss': outcome['loss'].item()},
-                **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
-                **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
-            }),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda outcome: lamarckian.util.record.Scalar(self.cost, **record.get_ratio(self, outcome, NAME)),
-        )
-
-    def close(self):
-        self.saver()
-        self.recorder.close()
-        return super().close()
-
-    def training(self):
-        self.results = lamarckian.rl.record.Results(**self.kwargs)
-        return super().training()
-
-    def __call__(self):
-        outcome = super().__call__()
-        self.results += outcome['results']
-        self.recorder(outcome)
-        return outcome

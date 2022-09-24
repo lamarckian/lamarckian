@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -30,23 +30,23 @@ class Module(nn.Module):
         self.kwargs = kwargs
         channel = Channel(input['shape'][0])
         self.linear = nn.Sequential(
-            nn.Linear(channel(), channel.next(256)),
+            nn.Linear(int(channel), channel(256)),
             nn.LeakyReLU(),
-            nn.Linear(channel(), channel.next(128)),
+            nn.Linear(int(channel), channel(128)),
             nn.LeakyReLU(),
         )
-        self.channel = channel()
+        self.channel = int(channel)
         self.discrete = nn.ModuleList([nn.Sequential(
-            nn.Linear(channel(), channel.next(128)),
+            nn.Linear(int(channel), channel(128)),
             nn.LeakyReLU(),
-            nn.Linear(channel(), len(names)),
+            nn.Linear(int(channel), len(names)),
         ) for names in kwargs.get('discrete', [])])
         if 'continuous' in kwargs:
             lower, upper = kwargs['continuous'].T.copy()
             self.continuous = nn.Sequential(
-                nn.Linear(channel(), channel.next(128)),
+                nn.Linear(int(channel), channel(128)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), len(lower) * 2),
+                nn.Linear(int(channel), len(lower) * 2),
                 nn.Unflatten(-1, [len(lower), 2]),
             )
             self.continuous.lower = torch.FloatTensor(lower).unsqueeze(0)

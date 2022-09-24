@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,24 +21,24 @@ from lamarckian.model import Channel
 
 
 class Module(nn.Module):
-    def __init__(self, inputs, discrete, **kwargs):
+    def __init__(self, inputs, outputs, **kwargs):
         super().__init__()
         input, = inputs
         self.kwargs = kwargs
         channel = Channel(input['shape'][0])
         self.linear = nn.Sequential(
-            nn.Linear(channel(), channel.next(256)),
+            nn.Linear(int(channel), channel(256)),
             nn.LeakyReLU(),
-            nn.Linear(channel(), channel.next(128)),
+            nn.Linear(int(channel), channel(128)),
             nn.LeakyReLU(),
         )
-        self.channel = channel()
+        self.channel = int(channel)
         self.logits = nn.Sequential(
-            nn.Linear(channel(), channel.next(128)),
+            nn.Linear(int(channel), channel(128)),
             nn.LeakyReLU(),
-            nn.Linear(channel(), len(discrete[0])),
+            nn.Linear(int(channel), outputs['discrete']),
         )
 
     def forward(self, x):
         self.share = self.linear(x)
-        return dict(discrete=[self.logits(self.share)])
+        return self.logits(self.share),

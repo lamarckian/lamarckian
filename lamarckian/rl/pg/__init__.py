@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@ import asyncio
 import numpy as np
 import torch
 import glom
+import humanfriendly
 import deepmerge
 
 import lamarckian
@@ -39,9 +40,8 @@ from . import agent
 class Actor(RL1):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         discount = glom.glom(kwargs['config'], 'rl.discount')
-        for name in encoding['reward']:
+        for name in self.encoding['blob']['reward']:
             self.hparam.setup(f"discount_{name}", glom.glom(kwargs['config'], f"rl.discount_{name}", default=discount), np.float)
         self.hparam.setup('prob_min', glom.glom(kwargs['config'], f'rl.{NAME}.prob_min', default=0), np.float)
         self.norm_reward = eval('lambda reward: ' + glom.glom(kwargs['config'], f'rl.{NAME}.norm_reward', default='reward'))
@@ -65,8 +65,7 @@ class Actor(RL1):
         return encoding
 
     def training(self):
-        encoding = self.describe()['blob']
-        self.discount = torch.FloatTensor([self.hparam[f"discount_{name}"] for name in encoding['reward']]).to(self.device)
+        self.discount = torch.FloatTensor([self.hparam[f"discount_{name}"] for name in self.encoding['blob']['reward']]).to(self.device)
         assert torch.logical_and(0 < self.discount, self.discount <= 1).all().item(), self.discount.numpy()
         return super().training()
 
@@ -75,11 +74,13 @@ class Actor(RL1):
         loop = asyncio.get_event_loop()
         battle = self.mdp.reset(me, *opponent, loop=loop)
         with contextlib.closing(battle), contextlib.closing(self.agent.train(self.model, hparam=self.hparam, generator=self.generator, **self.kwargs)) as agent, contextlib.closing(self.make_agents(opponent)) as agents:
-            trajectory, exp = loop.run_until_complete(asyncio.gather(
+            task = asyncio.gather(
                 rollout.get_trajectory(battle.controllers[0], agent),
                 *[rollout.get_cost(controller, agent) for controller, agent in zip(battle.controllers[1:], agents.values())],
                 *battle.ticks,
-            ))[0]
+            )
+            task.add_done_callback(lamarckian.util.print_exc)
+            trajectory, exp = loop.run_until_complete(task)[0]
             result = battle.controllers[0].get_result()
             if opponent:
                 result['digest_opponent_train'] = hashlib.md5(pickle.dumps(list(opponent.values()))).hexdigest()
@@ -167,10 +168,6 @@ class Evaluator(Learner):
             lambda *args, **kwargs: self.profiler(self.cost),
         )
         self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
-        )
-        self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
             lambda *args, **kwargs: lamarckian.rl.record.Rollout.new(**kwargs)(self.cost, self.get_blob()),
         )
@@ -184,14 +181,15 @@ class Evaluator(Learner):
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
-            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, self.get_blob()),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value.cpu().numpy() for key, value in self.model.state_dict().items()}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
         self.recorder.put(lamarckian.rl.record.Graph(f"{NAME}/graph", self.cost))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.cpu().numpy().nbytes for value in self.model.state_dict().values()))}))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)

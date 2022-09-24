@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,12 +16,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import inspect
-import contextlib
 
 import numpy as np
 import glom
 
 import lamarckian
+from . import ddp
 
 
 def stale(tag):
@@ -29,12 +29,12 @@ def stale(tag):
     PATH_FUNC = f'{__name__}.{NAME_FUNC}'
 
     def fetch(self):
-        attr = getattr(self, PATH_FUNC)
-        if attr:
+        iterations = getattr(self, PATH_FUNC)
+        if len(iterations):
             try:
                 return {
-                    f'{tag}/{NAME_FUNC}/max': np.max(attr),
-                    f'{tag}/{NAME_FUNC}/mean': np.mean(attr),
+                    f'{tag}/{NAME_FUNC}/max': np.max(iterations),
+                    f'{tag}/{NAME_FUNC}/mean': np.mean(iterations),
                 }
             finally:
                 setattr(self, PATH_FUNC, [])
@@ -52,9 +52,9 @@ def stale(tag):
                     lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **fetch(self)),
                 )
 
-            def receive(self):
-                cost, tensors, results, iteration = super().receive()
-                getattr(self, PATH_FUNC).append(self.iteration - iteration)
-                return cost, tensors, results, iteration
+            def __next__(self):
+                cost, tensors, results, iterations = super().__next__()
+                setattr(self, PATH_FUNC, np.concatenate([getattr(self, PATH_FUNC), self.iteration - np.array(iterations)]))
+                return cost, tensors, results, iterations
         return RL
     return decorate

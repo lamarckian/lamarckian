@@ -1,6 +1,0 @@
-evaluator:
-  create:
-    - lamarckian.rl.ppo.DDP
-rl:
-  ray:
-    num_gpus: 1

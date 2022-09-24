@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -42,28 +42,15 @@ from lamarckian.mdp import rollout
 from . import agent, remote, skip, record, wrap
 
 
-def to_device(device, *args, **kwargs):
-    if args and kwargs:
-        raise TypeError
-    if args:
-        tensors = []
-        for value in args:
-            if torch.is_tensor(value):
-                tensors.append(value.to(device))
-            elif isinstance(value, collections.abc.Sequence):
-                tensors.append([t.to(device) for t in value])
-            else:
-                raise TypeError
-    elif kwargs:
-        tensors = {}
-        for key, value in kwargs.items():
-            if torch.is_tensor(value):
-                tensors[key] = value.to(device)
-            elif isinstance(value, collections.abc.Sequence):
-                tensors[key] = [t.to(device) for t in value]
-            else:
-                raise TypeError(key, value)
-    else: raise TypeError
+def to_device(device, **kwargs):
+    tensors = {}
+    for key, value in kwargs.items():
+        if torch.is_tensor(value):
+            tensors[key] = value.to(device)
+        elif isinstance(value, collections.abc.Sequence):
+            tensors[key] = [t.to(device) for t in value]
+        else:
+            raise TypeError(key, value)
     return tensors
 
 
@@ -88,6 +75,27 @@ def make_batch(get, batch_size, dim=0):
     return {key: cat(values, dim) for key, values in zip(tensors.keys(), zip(*batch))}
 
 
+class Categorical(torch.distributions.Categorical):
+    def __init__(self, logits, legal=None):
+        self.legal = legal
+        if legal is None:
+            super().__init__(logits=logits)
+        else:
+            logits.masked_fill_(~legal, torch.finfo(logits.dtype).min)
+            super().__init__(logits=logits)
+
+    def entropy(self):
+        if self.legal is None:
+            return super().entropy()
+        logp = self.logits * self.probs
+        logp = torch.where(
+            self.legal,
+            logp,
+            torch.tensor(0, dtype=logp.dtype, device=logp.device),
+        )
+        return -logp.sum(-1)
+
+
 class Agents(dict):
     def __init__(self, agents):
         for id, agent in agents.items():
@@ -109,7 +117,7 @@ class RL(lamarckian.evaluator.Evaluator):
         self.opponents_eval_digest = ''
 
     def describe(self):
-        return dict(blob=dict(me=self.me, enemies=self.enemies))
+        return dict(blob={})
 
     def set_opponent_train(self, opponent):
         assert opponent
@@ -144,9 +152,7 @@ class RL(lamarckian.evaluator.Evaluator):
 
 
 def swap(size, opponent, random=random, **kwargs):
-    if not opponent:
-        return random.choice(list(range(size))), {}
-    else:
+    if opponent:
         assert 1 + len(opponent) == size, (len(opponent), size)
         if len(opponent) == 1:
             if random.random() < glom.glom(kwargs['config'], 'rl.swap', default=0.5):
@@ -158,17 +164,14 @@ def swap(size, opponent, random=random, **kwargs):
                 return me, opponent
         else:
             assert False, len(opponent)
+    else:
+        if glom.glom(kwargs['config'], 'rl.swap', default=0.5):
+            return random.choice(list(range(size))), {}
+        else:
+            return glom.glom(kwargs['config'], 'rl.me', default=0), {}
 
 
 class RL1(RL):
-    """
-    Base for all RL algorithms.
-
-    :param mdp.create: The MDP class used to create the environment.
-    :param rl.me: Configuration of the primary agent.
-    :param rl.enemies: Configuration of other agents.
-    :param config: Trainging configuration.
-    """
     def __init__(self, state={}, **kwargs):
         super().__init__(state, **kwargs)
         cls = lamarckian.evaluator.parse(*glom.glom(kwargs['config'], 'mdp.create'), **kwargs)
@@ -176,9 +179,13 @@ class RL1(RL):
         self.hparam = lamarckian.util.Hparam()
         if hasattr(self.mdp, 'hparam'):
             self.hparam.__setstate__(self.mdp.hparam.__getstate__())
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        encoding = self.describe()['blob']
-        model = encoding['models'][self.me]
+        try:
+            self.device = torch.device(kwargs.pop('device'))
+        except KeyError:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.encoding = self.describe()
+        encoding = self.encoding['blob']
+        model = encoding['models'][0]
         module = lamarckian.evaluator.parse(*model['cls'], **kwargs)
         self._model = functools.partial(module, **model, **kwargs, reward=encoding['reward'])
         self.model = self._model()
@@ -264,11 +271,13 @@ class RL1(RL):
                     me, opponent = swap(len(self.models), opponent, random=self.random, **self.kwargs)
                 battle = self.mdp.reset(me, *opponent, loop=loop)
                 with contextlib.closing(battle), contextlib.closing(self.agent.eval(self.model)) as agent, contextlib.closing(self.make_agents(opponent)) as agents:
-                    costs = loop.run_until_complete(asyncio.gather(
+                    task = asyncio.gather(
                         rollout.get_cost(battle.controllers[0], agent),
                         *[rollout.get_cost(controller, agent) for controller, agent in zip(battle.controllers[1:], agents.values())],
                         *battle.ticks,
-                    ))[:len(battle.controllers)]
+                    )
+                    task.add_done_callback(lamarckian.util.print_exc)
+                    costs = loop.run_until_complete(task)[:len(battle.controllers)]
                     result = battle.controllers[0].get_result()
                     if opponent:
                         result['digest_opponent_eval'] = hashlib.md5(pickle.dumps(opponent)).hexdigest()
@@ -284,11 +293,13 @@ class RL1(RL):
                 me, opponent = swap(len(self.models), opponent, random=self.random, **self.kwargs)
                 battle = self.mdp.reset(me, *opponent, loop=loop)
                 with contextlib.closing(battle), contextlib.closing(self.agent.eval(self.model)) as agent, contextlib.closing(self.make_agents(opponent)) as agents:
-                    data = loop.run_until_complete(asyncio.gather(
+                    task = asyncio.gather(
                         rollout.get_trajectory(battle.controllers[0], agent, **kwargs),
                         *[rollout.get_cost(controller, agent) for controller, agent in zip(battle.controllers[1:], agents.values())],
                         *battle.ticks,
-                    ))[:len(battle.controllers)]
+                    )
+                    task.add_done_callback(lamarckian.util.print_exc)
+                    data = loop.run_until_complete(task)[:len(battle.controllers)]
                     trajectory, exp = data[0]
                     result = battle.controllers[0].get_result()
                     if opponent:
@@ -309,6 +320,9 @@ class RL1(RL):
         for args in zip(range(sample), itertools.cycle(opponents)):
             yield self.evaluate1_trajectory(*args, **kwargs)
 
+    def fictitious_play(self, *args, **kwargs):
+        return lamarckian.mdp.nash.fictitious_play(*args, **kwargs)
+
     def __getstate__(self):
         state = super().__getstate__()
         state['mdp'] = self.mdp.__getstate__()
@@ -319,12 +333,22 @@ class RL1(RL):
         return kwargs.get('ray', ray).remote(**glom.glom(kwargs['config'], 'evaluator.ray'))(cls)
 
 
-class Remote(RL):
-    """
-    Base class for all distributed RL algorithms.
+def get_parallel(**kwargs):
+    if 'ray' in kwargs:
+        parallel = 1
+    else:
+        try:
+            try:
+                parallel = kwargs['parallel']
+            except KeyError:
+                parallel = glom.glom(kwargs['config'], 'evaluator.parallel')
+        except KeyError:
+            parallel = int(ray.cluster_resources()['CPU'] / glom.glom(kwargs['config'], 'evaluator.ray.num_cpus', default=1))
+    assert parallel > 0, parallel
+    return parallel
 
-    Actor is the class used to create (remote) works that are responsible for collecting rollouts.
-    """
+
+class Learner(RL):
     Actor = None
 
     def __init__(self, state={}, **kwargs):
@@ -333,22 +357,31 @@ class Remote(RL):
             torch.set_num_threads(glom.glom(kwargs['config'], 'rl.threads', default=1))
         except KeyError:
             logging.warning('learner use all threads')
+        try:
+            self.device = torch.device(kwargs.pop('device'))
+        except KeyError:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         if (glom.glom(kwargs['config'], 'evaluator.progress', default=False) or 'index' not in kwargs) and 'ray' not in kwargs:
             progress = f"learner{kwargs.get('index', '')}"
         else:
             progress = None
-        self.actors = self.create_actor(progress, **kwargs)
+        parallel = get_parallel(**kwargs)
+        self.actors = self.create_actors(parallel, progress)
+        assert len(self.actors) == parallel, (len(self.actors), parallel)
         self.rpc_all = lamarckian.util.rpc.All(self.actors, progress=progress, **kwargs)
         self.rpc_any = lamarckian.util.rpc.Any(self.actors, **kwargs)
         self.hparam = lamarckian.util.Hparam()
         self.hparam.__setstate__(self.rpc_any('get_hparam'))
-        encoding = self.describe()['blob']
-        model = encoding['models'][self.me]
+        self.sync_hparam(self.hparam.__getstate__())
+        self.encoding = self.describe()
+        encoding = self.encoding['blob']
+        model = encoding['models'][0]
         module = lamarckian.evaluator.parse(*model['cls'], **kwargs)
         self.model = module(**model, **kwargs, reward=encoding['reward'])
         if state:
             self.set(state['decision'])
         self.model.train()
+        self.model.to(self.device)
         self.agent = types.SimpleNamespace(**{key: lamarckian.evaluator.parse(*spec, **kwargs) for key, spec in encoding['agent'].items()})
 
     def close(self):
@@ -356,43 +389,35 @@ class Remote(RL):
         self.rpc_any.close()
         self.ray.get([actor.close.remote() for actor in self.actors])
 
-    def create_actor(self, progress, **kwargs):
-        """
-        Create remote Actors that runs on different processes with Ray.
-        """
-        if 'ray' in kwargs:
-            parallel = 1
-        else:
-            try:
-                try:
-                    parallel = kwargs['parallel']
-                except KeyError:
-                    parallel = glom.glom(kwargs['config'], 'evaluator.parallel')
-            except KeyError:
-                parallel = int(ray.cluster_resources()['CPU'] / glom.glom(kwargs['config'], 'evaluator.ray.num_cpus', default=1))
-        assert parallel > 0, parallel
+    def create_actors(self, parallel, progress=False, remote=lambda cls, *args, **kwargs: cls.remote(*args, **kwargs)):
         cls = lamarckian.evaluator.parse(
             self.Actor, wrap.remote.training_switch,
-            *glom.glom(kwargs['config'], 'evaluator.wrap', default=[]),
-            **kwargs,
+            *glom.glom(self.kwargs['config'], 'evaluator.wrap', default=[]),
+            **self.kwargs,
         )
-        cls = cls.remote_cls(**kwargs)
+        cls = lamarckian.evaluator.wrap.fix_ray(cls)
+        cls = cls.remote_cls(**self.kwargs)
 
-        def create(index, **_kwargs):
+        def create(index, **kwargs):
             try:
-                name = f"{kwargs['name']}/actor{index}"
+                name = f"{self.kwargs['name']}/actor{index}"
             except KeyError:
                 name = f"actor{index}"
-            return cls.options(name=name, **_kwargs).remote(**{**kwargs, **dict(index=index, name=name)})
-
-        size = glom.glom(kwargs['config'], 'evaluator.group', default=None)
-        if 'index' in kwargs and isinstance(size, numbers.Integral):
+            return remote(cls.options(name=name, **kwargs), **{**self.kwargs, **dict(index=index, name=name)})
+        size = glom.glom(self.kwargs['config'], 'evaluator.group', default=None)
+        if 'ray' not in self.kwargs and isinstance(size, numbers.Integral):
             if size <= 0:
                 sizes = [node['Resources'].get('CPU', 0) for node in self.ray.nodes()]
                 sizes = [size for size in sizes if size > 0]
                 size = int(min(sizes))
             groups = [(self.ray.util.placement_group([{'CPU': len(indexes)}]), indexes) for indexes in toolz.itertoolz.partition_all(size, range(parallel))]
-            return [create(index, placement_group=placement_group) for placement_group, indexes in groups for index in indexes]
+            if progress is None:
+                self.ray.wait([pg.ready() for pg in next(zip(*groups))])
+                return [create(index, placement_group=placement_group) for placement_group, indexes in groups for index in indexes]
+            else:
+                lamarckian.util.remote.progress([pg.ready() for pg in next(zip(*groups))], f"{progress} pg{size}")
+                tasks = [(index, placement_group) for placement_group, indexes in groups for index in indexes]
+                return [create(index, placement_group=placement_group) for index, placement_group in tqdm.tqdm(tasks, progress)]
         else:
             return [create(index) for index in (range if progress is None else functools.partial(tqdm.trange, desc=progress))(parallel)]
 
@@ -404,12 +429,10 @@ class Remote(RL):
         return len(self.actors)
 
     def describe(self):
-        self.sync_hparam(self.hparam.__getstate__())
         name = inspect.getframeinfo(inspect.currentframe()).function
         return self.rpc_any(name)
 
     def initialize(self):
-        self.sync_hparam(self.hparam.__getstate__())
         name = inspect.getframeinfo(inspect.currentframe()).function
         return self.rpc_any(name)
 
@@ -426,8 +449,8 @@ class Remote(RL):
         return self.rpc_all('set_hparam', state)
 
     def set_hparam(self, state):
-        self.sync_hparam(state)
         self.hparam.__setstate__(state)
+        self.sync_hparam(state)
 
     def set(self, decision):
         name = inspect.getframeinfo(inspect.currentframe()).function
@@ -454,17 +477,22 @@ class Remote(RL):
         return decision
 
     def training(self):
-        self.sync_blob(self.get_blob())
-        self.sync_hparam(self.hparam.__getstate__())
+        sleep = glom.glom(self.kwargs['config'], 'rpc.sleep', default=0)  # zmq slow joiner
+        with lamarckian.util.rpc.all.ensure(sleep):
+            self.sync_hparam(self.hparam.__getstate__())
+        with lamarckian.util.rpc.all.ensure(sleep):
+            self.sync_blob(self.get_blob())
         var = {}
         with codecs.open(os.path.join(os.path.dirname(os.path.abspath(lamarckian.__file__)), 'import.py'), 'r', 'utf-8') as f:
             exec(f.read(), var)
         self.optimizer = eval('lambda params, lr: ' + glom.glom(self.kwargs['config'], 'train.optimizer'), var)(filter(lambda p: p.requires_grad, self.model.parameters()), self.hparam['lr'])
         training = super().training()
-        self.rpc_all('training_on')
+        with lamarckian.util.rpc.all.ensure(sleep):
+            self.rpc_all('training_on')
 
         def close():
-            self.rpc_all('training_off')
+            with lamarckian.util.rpc.all.ensure(sleep):
+                self.rpc_all('training_off')
             training.close()
         return types.SimpleNamespace(close=close)
 
@@ -481,6 +509,10 @@ class Remote(RL):
         self.sync_blob(self.get_blob())
         opponents = self.get_opponents_eval()
         return self.rpc_any.map((('evaluate1_trajectory', args, kwargs) for args in zip(range(sample), itertools.cycle(opponents))))
+
+    def get_nash(self, payoff):
+        counts = sum(self.rpc_all.fetch_all('fictitious_play', payoff))
+        return lamarckian.mdp.nash.to_probs(counts)
 
     def describe_rpc_all(self):
         return repr(self.rpc_all)
@@ -530,12 +562,15 @@ class Truncator(object):
         self.agent = self.rl.agent.train(self.rl.model, hparam=self.rl.hparam, generator=self.rl.generator, **self.rl.kwargs)
         self.agents = self.rl.make_agents(self.opponent)
         self.battle = self.rl.mdp.reset(me, *self.opponent, loop=self.loop)
-        self.tasks = {asyncio.Task(rollout.get_cost(controller, agent), loop=self.loop) for controller, agent in zip(self.battle.controllers[1:], self.agents.values())} | {asyncio.Task(tick, loop=self.loop) for tick in self.battle.ticks}
+        self.tasks = {self.loop.create_task(rollout.get_cost(controller, agent)) for controller, agent in zip(self.battle.controllers[1:], self.agents.values())} | {asyncio.Task(tick, loop=self.loop) for tick in self.battle.ticks}
+        for task in self.tasks:
+            task.add_done_callback(lamarckian.util.print_exc)
 
     def __next__(self):
         if self.done:
             self._reset()
-        task = asyncio.Task(rollout.get_trajectory(self.battle.controllers[0], self.agent, step=self.step, cast=self.cast), loop=self.loop)
+        task = self.loop.create_task(rollout.get_trajectory(self.battle.controllers[0], self.agent, step=self.step, cast=self.cast))
+        task.add_done_callback(lamarckian.util.print_exc)
         lamarckian.mdp.util.wait(task, self.tasks, self.loop)
         trajectory, exp = task.result()
         self.done = trajectory[-1]['done']

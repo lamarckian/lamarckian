@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -219,37 +219,25 @@ class MA(MDP):
         )
 
     async def tick(self, controllers):
-        try:
-            while True:
-                actions = [await controller.queue.action.get() for controller in controllers]
-                states, rewards, done, info = self.env.step(actions)
-                if isinstance(done, collections.abc.Sequence):
-                    done = done[0]
-                done = done or self.frame >= self.length
-                for controller, state, reward in zip(controllers, states, rewards):
-                    controller.state = state
-                    await controller.queue.exp.put(dict(reward=reward, done=done))
-                self.frame += 1
-                if done:
-                    break
-        except GeneratorExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
+        while True:
+            actions = [await controller.queue.action.get() for controller in controllers]
+            states, rewards, done, info = self.env.step(actions)
+            if isinstance(done, collections.abc.Sequence):
+                done = done[0]
+            done = done or self.frame >= self.length
+            for controller, state, reward in zip(controllers, states, rewards):
+                controller.state = state
+                await controller.queue.exp.put(dict(reward=reward, done=done))
+            self.frame += 1
+            if done:
+                break
 
     async def rule(self, controller):
-        try:
-            space = self.env.action_space.spaces[controller.me]
-            while True:
-                if isinstance(space, gym.spaces.discrete.Discrete):
-                    exp = await controller(discrete=[0])
-                else:
-                    exp = await controller(continuous=torch.from_numpy((space.low + space.high) / 2).unsqueeze(0))
-                if exp['done']:
-                    break
-        except GeneratorExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
+        space = self.env.action_space.spaces[controller.me]
+        while True:
+            if isinstance(space, gym.spaces.discrete.Discrete):
+                exp = await controller(discrete=[0])
+            else:
+                exp = await controller(continuous=torch.from_numpy((space.low + space.high) / 2).unsqueeze(0))
+            if exp['done']:
+                break

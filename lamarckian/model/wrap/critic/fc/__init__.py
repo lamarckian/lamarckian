@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ def share0(module):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             channel = Channel(self.channel)
-            self.critic = nn.Linear(channel(), len(kwargs['reward']))
+            self.critic = nn.Linear(int(channel), len(kwargs['reward']))
 
         def forward(self, *args, **kwargs):
             outputs = super().forward(*args, **kwargs)
@@ -40,9 +40,9 @@ def share1(module):
             super().__init__(*args, **kwargs)
             channel = Channel(self.channel)
             self.critic = nn.Sequential(
-                nn.Linear(channel(), channel.next(128)),
+                nn.Linear(int(channel), channel(128)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), len(kwargs['reward'])),
+                nn.Linear(int(channel), len(kwargs['reward'])),
             )
 
         def forward(self, *args, **kwargs):
@@ -58,11 +58,11 @@ def share2(module):
             super().__init__(*args, **kwargs)
             channel = Channel(self.channel)
             self.critic = nn.Sequential(
-                nn.Linear(channel(), channel.next(128)),
+                nn.Linear(int(channel), channel(128)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), channel.next(64)),
+                nn.Linear(int(channel), channel(64)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), len(kwargs['reward'])),
+                nn.Linear(int(channel), len(kwargs['reward'])),
             )
 
         def forward(self, *args, **kwargs):
@@ -79,11 +79,11 @@ def full2(module):
             input, = inputs
             channel = Channel(input['shape'][0])
             self.critic = nn.Sequential(
-                nn.Linear(channel(), channel.next(128)),
+                nn.Linear(int(channel), channel(128)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), channel.next(64)),
+                nn.Linear(int(channel), channel(64)),
                 nn.LeakyReLU(),
-                nn.Linear(channel(), len(kwargs['reward'])),
+                nn.Linear(int(channel), len(kwargs['reward'])),
             )
 
         def forward(self, x, *args, **kwargs):

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -50,8 +50,10 @@ def tidy(root, args):
 def load(root):
     try:
         path = next(lamarckian.util.file.load(root))
-        logging.info(f'load {path}')
-        state = torch.load(path, map_location=lambda storage, loc: storage)
+        with contextlib.closing(lamarckian.util.DelayNewline()) as logger:
+            logging.info(f'load {path} ... ')
+            state = torch.load(path, map_location=lambda storage, loc: storage)
+            logger('done')
         if 'decision' not in state:
             logging.warning('decision not found')
             state['decision'] = max(state['population'], key=lambda individual: individual['result']['fitness'])['decision']

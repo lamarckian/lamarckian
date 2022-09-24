@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,7 +16,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import random
-from typing import Dict
 
 import numpy as np
 import torch
@@ -65,19 +64,20 @@ class Train(Eval):
             _, action = q.max(-1)
             return action
 
-    def __call__(self, state: Dict) -> Dict:
+    def __call__(self, state):
         inputs = self.get_inputs(state)
-        q = self.forward(*inputs)['discrete'][0]
-        exp = dict(inputs=inputs)
-        
-        if 'legal' in state.keys():
+        q, = self.forward(*inputs)
+        try:
             legal = torch.FloatTensor(state['legal']).unsqueeze(0).to(self.device)
-            q = self.mask_legal(q, legal)
-            exp['legal'] = legal
-            
+        except KeyError:
+            legal = None
+        q = self.mask_legal(q, legal)
         action = self.explore(q)
-        exp['inputs'] = inputs
-        exp['action'] = action
-        exp['discrete'] = [int(action)]
+        exp = dict(
+            inputs=inputs,
+            q=q,
+            action=action,
+        )
+        if legal is not None:
+            exp['legal'] = legal
         return exp
-        

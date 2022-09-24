@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -35,8 +35,10 @@ from lamarckian.train import tidy
 def load(root, **kwargs):
     try:
         path = next(lamarckian.util.file.load(root))
-        logging.info(f'load {path}')
-        state = torch.load(path, map_location=lambda storage, loc: storage)
+        with contextlib.closing(lamarckian.util.DelayNewline()) as logger:
+            logging.info(f"load {path} ... ")
+            state = torch.load(path, map_location=lambda storage, loc: storage)
+            logger('done')
         if 'population' not in state:
             logging.warning('population not in state')
             rs = np.random.RandomState(0)

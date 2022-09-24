@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -46,8 +46,10 @@ def agg(mdp):
     class MDP(mdp):
         class Controller(mdp.Controller):
             def get_reward(self):
+                attr = getattr(self.mdp, PATH_FUNC)
                 reward = super().get_reward()
-                return np.array([sum(reward[i] for i in items.values()) for items in getattr(self.mdp, PATH_FUNC).values()])
+                assert reward.shape[-1] == len(attr.reward), (reward.shape, attr.reward)
+                return np.stack([sum(np.take(reward, i, -1) for i in items.values()) for items in attr.agg.values()], -1)
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -55,16 +57,17 @@ def agg(mdp):
             reward = super().describe()['blob']['reward']
             assert len(reward) == len(set(reward)), reward
             index = {name: i for i, name in enumerate(reward)}
-            attr = {key: {name: index[name] for name in names} for key, names in glom.glom(kwargs['config'], 'mdp.reward.agg', default={}).items() if names}
-            for name in set(index) - {name for names in attr.values() for name in names}:
-                attr[name] = dict(name=index[name])
-            if len(attr) == len(index):
-                attr = {'': index}
-            setattr(self, PATH_FUNC, attr)
+            agg = {key: {name: index[name] for name in names} for key, names in glom.glom(kwargs['config'], 'mdp.reward.agg', default={}).items() if names}
+            if agg:
+                remaining = set(index) - {name for names in agg.values() for name in names}
+                assert not remaining, ' '.join(remaining)
+            else:
+                agg = {'': index}
+            setattr(self, PATH_FUNC, types.SimpleNamespace(agg=agg, reward=reward))
 
         def describe(self):
             encoding = super().describe()
-            encoding['blob']['reward'] = list(getattr(self, PATH_FUNC))
+            encoding['blob']['reward'] = list(getattr(self, PATH_FUNC).agg)
             return encoding
     return MDP
 
@@ -87,9 +90,9 @@ def log(*names):
                 def get_reward(self):
                     reward = super().get_reward()
                     if hasattr(self.mdp, PATH_FUNC):
-                        assert len(reward) >= len(names), (len(reward), names)
+                        assert reward.shape[-1] >= len(names), (reward.shape, names)
                         for i, name in enumerate(names):
-                            getattr(self, f"{NAME_FUNC}.{name}").append(reward[-i - 1])
+                            getattr(self, f"{NAME_FUNC}.{name}").append(np.take(reward, -i - 1, -1))
                     return reward
 
                 def get_result(self):
@@ -97,10 +100,7 @@ def log(*names):
                         root = getattr(self.mdp, PATH_FUNC)
                         os.makedirs(root, exist_ok=True)
                         for name in names:
-                            path = os.path.join(root, f"{name}.tsv")
-                            with open(path, 'w') as f:
-                                for reward in getattr(self, f"{NAME_FUNC}.{name}"):
-                                    f.write(str(reward) + '\n')
+                            np.savetxt(os.path.join(root, f"{name}.tsv"), getattr(self, f"{NAME_FUNC}.{name}"), fmt='%s', delimiter='\t')
                     return super().get_result()
 
             def reset(self, *args, **kwargs):

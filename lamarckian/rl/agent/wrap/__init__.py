@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,9 +17,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import inspect
 
-import torch
-import torch.nn as nn
-
 
 def lstm(agent):
     NAME_FUNC = f'{inspect.getframeinfo(inspect.currentframe()).function}'
@@ -29,21 +26,14 @@ def lstm(agent):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            try:
-                lstm = next((module for module in self.model.modules() if isinstance(module, nn.LSTM)))
-                setattr(self, PATH_FUNC, (
-                    torch.zeros(1, lstm.num_layers, lstm.hidden_size).to(self.device),
-                    torch.zeros(1, lstm.num_layers, lstm.hidden_size).to(self.device),
-                ))
-            except StopIteration:
-                setattr(self, PATH_FUNC, tuple())
+            hidden = getattr(self.model, 'hidden', tuple())
+            setattr(self, PATH_FUNC, hidden)
 
         def get_inputs(self, *args, **kwargs):
             return super().get_inputs(*args, **kwargs) + getattr(self, PATH_FUNC)
 
         def forward(self, *args, **kwargs):
             outputs = super().forward(*args, **kwargs)
-            if getattr(self, PATH_FUNC):
-                setattr(self, PATH_FUNC, outputs['hidden'])
+            setattr(self, PATH_FUNC, outputs.get('hidden', tuple()))
             return outputs
     return Agent

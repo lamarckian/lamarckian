@@ -1,0 +1,14 @@
+evaluator:
+  create:
+    ${__extend__}:
+      - lamarckian.ec.swarm.wrap.evaluator.pso.real.global_best()
+ec:
+  swarm:
+    real:
+      velocity:
+        min: 0
+        max: 1
+      weight:
+        inertia: 0.9
+        pbest: 0.5
+        gbest: 0.3

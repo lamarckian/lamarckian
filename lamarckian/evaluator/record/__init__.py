@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -40,10 +40,11 @@ class Profiler(object):
         net_io = psutil.net_io_counters()
         try:
             data = {
-                **{
-                    f"{self.tag}/cost": speed,
-                },
+                f"{self.tag}/cost": speed,
+                f"{self.tag}/cpu": psutil.cpu_percent(),
+                f"{self.tag}/virtual_memory": psutil.virtual_memory().percent,
                 **{f"{self.tag}/net_io/{key}": (getattr(net_io, key) - getattr(self.net_io, key)) / elapsed for key in glom.glom(self.kwargs['config'], 'profile.net_io', default=[])},
+                **{f"{self.tag}/duration/{key}": value for key, value in lamarckian.util.duration.stats.items()}
             }
             if self.size > 1:
                 data[f"{self.tag}/cost/avg"] = speed / self.size

@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -172,20 +172,14 @@ class MDP2(MDP):
         )
 
     async def tick(self, controllers):
-        try:
-            while True:
-                actions = [await controller.queue.action.get() for controller in controllers]
-                actions = [self.action_table[action] for action in actions]
-                state, reward, done, info = self.env.step(*actions)
-                states = [state, info['otherObs']]
-                rewards = [reward, -reward]
-                for controller, state, reward in zip(controllers, states, rewards):
-                    controller.state = state
-                    await controller.queue.exp.put(dict(reward=reward, done=done))
-                if done:
-                    break
-        except GeneratorExit:
-            pass
-        except:
-            traceback.print_exc()
-            raise
+        while True:
+            actions = [await controller.queue.action.get() for controller in controllers]
+            actions = [self.action_table[action] for action in actions]
+            state, reward, done, info = self.env.step(*actions)
+            states = [state, info['otherObs']]
+            rewards = [reward, -reward]
+            for controller, state, reward in zip(controllers, states, rewards):
+                controller.state = state
+                await controller.queue.exp.put(dict(reward=reward, done=done))
+            if done:
+                break

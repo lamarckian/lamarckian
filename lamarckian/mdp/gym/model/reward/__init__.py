@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,9 +26,9 @@ class Module(nn.Module):
         self.kwargs = kwargs
         channel = Channel(inputs)
         self.linear = nn.Sequential(
-            nn.Linear(channel(), channel.next(8)),
+            nn.Linear(int(channel), channel(8)),
             nn.Tanh(),
-            nn.Linear(channel(), 1),
+            nn.Linear(int(channel), 1),
         )
 
     def forward(self, x):

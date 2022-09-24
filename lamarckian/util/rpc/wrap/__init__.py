@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,26 +15,142 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import os
 import inspect
 import types
 import contextlib
+import multiprocessing
 import threading
+import queue
 import functools
 import traceback
 import ctypes
+import signal
 import asyncio
 
 import zmq
-try:
-    import nnpy
-    import pynng
-except ImportError:
-    pass
-import ray.services
+import glom
+import ray
 
-from .. import util
+import lamarckian
 from . import map_methods, record
-from ..all.wrap import tree as all
+from .. import util
+
+
+def all(actor):
+    NAME_FUNC = inspect.getframeinfo(inspect.currentframe()).function
+    PATH_FUNC = f'{__name__}.{NAME_FUNC}'
+
+    def execute(self, serializer, name, args, kwargs, fetch=False):
+        try:
+            func = getattr(self, name)
+            result = func(*args, **kwargs)
+            if fetch:
+                return serializer.serialize(result) + bytes([0])
+            else:
+                return bytes([0])
+        except Exception as e:
+            traceback.print_exc()
+            return serializer.serialize(e) + bytes([1])
+
+    def run(self, param, result, **kwargs):
+        from .all import Connection
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        serializer = glom.glom(kwargs['config'], 'rpc.serializer')
+        serializer = lamarckian.util.serialize.Serializer(serializer)
+        with contextlib.closing(Connection(**kwargs)) as connection:
+            connection.connect_upstream(param, result)
+            upstream = connection.upstream
+            upstream.result.send(b'')
+            while True:
+                data = connection.parse(upstream.param.recv())
+                if data:
+                    (name, args, kwargs), fetch = serializer.deserialize(data[:-1]), util.Fetch(data[-1])
+                    upstream.result.send(execute(self, serializer, name, args, kwargs, fetch != util.Fetch.call))
+                else:
+                    del data
+                    upstream.result.send(b'')
+                    break
+
+    # setup
+
+    def setup_execute(*args, **kwargs):
+        threading.Thread(target=run, args=args, kwargs=kwargs).start()
+
+    def setup_router(self, *args, **kwargs):
+        from .all import run_router as run
+        if glom.glom(kwargs['config'], 'ray.local_mode', default=False):
+            init = queue.Queue()
+            threading.Thread(target=run, args=(init,) + args, kwargs=kwargs).start()
+            return init.get()
+        else:
+            init = multiprocessing.Queue()
+            pid = os.fork()
+            if pid:
+                return init.get()
+            else:
+                try:
+                    import prctl
+                    prctl.set_pdeathsig(signal.SIGKILL)
+                except ImportError:
+                    traceback.print_exc()
+                run(init, *args, **kwargs)
+
+    def setup_assembler(self, *args, **kwargs):
+        from .all import run_assembler as run
+        if glom.glom(kwargs['config'], 'ray.local_mode', default=False):
+            init = queue.Queue()
+            threading.Thread(target=run, args=(init,) + args, kwargs=kwargs).start()
+            return init.get()
+        else:
+            init = multiprocessing.Queue()
+            pid = os.fork()
+            if pid:
+                return init.get()
+            else:
+                try:
+                    import prctl
+                    prctl.set_pdeathsig(signal.SIGKILL)
+                except ImportError:
+                    traceback.print_exc()
+                run(init, *args, **kwargs)
+
+    def setup_leaf(self, *args, **kwargs):
+        from .all import run_leaf as run
+        if glom.glom(kwargs['config'], 'ray.local_mode', default=False):
+            init = queue.Queue()
+            threading.Thread(target=run, args=(init,) + args, kwargs=kwargs).start()
+            return init.get()
+        else:
+            init = multiprocessing.Queue()
+            pid = os.fork()
+            if pid:
+                return init.get()
+            else:
+                try:
+                    import prctl
+                    prctl.set_pdeathsig(signal.SIGKILL)
+                except ImportError:
+                    traceback.print_exc()
+                run(init, *args, **kwargs)
+
+    setup = dict(
+        execute=setup_execute,
+        router=setup_router,
+        assembler=setup_assembler,
+        leaf=setup_leaf,
+    )
+
+    class Actor(actor):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            assert not hasattr(self, PATH_FUNC)
+
+        def setup_rpc_all(self, mode=None, *args, **kwargs):
+            if mode is None:
+                return ray.util.get_node_ip_address()
+            return setup[mode](self, *args, **kwargs)
+    return Actor
 
 
 def any(actor):
@@ -43,17 +159,9 @@ def any(actor):
 
     class Connection(object):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            if kwargs['backend'] == 'nnpy':
-                self.socket = socket = types.SimpleNamespace(args=nnpy.Socket(nnpy.AF_SP, nnpy.PULL), result=nnpy.Socket(nnpy.AF_SP, nnpy.PUSH))
-            elif kwargs['backend'] == 'pynng':
-                self.socket = socket = types.SimpleNamespace(args=pynng.Pull0(), result=pynng.Push0())
-                for s in socket.__dict__.values():
-                    s.connect = s.dial
-            else:
-                self.context = context = zmq.Context()
-                self.socket = socket = types.SimpleNamespace(args=context.socket(zmq.PULL), result=context.socket(zmq.PUSH))
-            socket.args.connect(kwargs['args'])
+            self.context = context = zmq.Context()
+            self.socket = socket = types.SimpleNamespace(param=context.socket(zmq.PULL), result=context.socket(zmq.PUSH))
+            socket.param.connect(kwargs['param'])
             socket.result.connect(kwargs['result'])
 
         def close(self):
@@ -62,33 +170,36 @@ def any(actor):
             if hasattr(self, 'context'):
                 self.context.term()
 
-    def run(self, connection):
+    def run(self, **kwargs):
         asyncio.set_event_loop(asyncio.new_event_loop())
-        attr = getattr(self, PATH_FUNC)
-        with contextlib.closing(connection):
+        serializer = glom.glom(kwargs['config'], 'rpc.serializer')
+        serializer = lamarckian.util.serialize.Serializer(serializer)
+        with contextlib.closing(Connection(**kwargs)) as connection:
+            socket = connection.socket
+            socket.result.send(b'')
             while True:
-                data = connection.socket.args.recv()
+                data = socket.param.recv()
                 if data:
                     try:
-                        name, args, kwargs = attr.serializer.deserialize(data)
+                        name, args, kwargs = serializer.deserialize(data)
                         if name is None:
                             result, = args
                         else:
                             func = getattr(self, name)
                             result = func(*args, **kwargs)
-                        connection.socket.result.send(attr.serializer.serialize(result))
+                        socket.result.send(serializer.serialize(result))
                     except Exception as e:
                         traceback.print_exc()
-                        connection.socket.result.send(attr.serializer.serialize(e))
+                        socket.result.send(serializer.serialize(e))
                 else:
-                    connection.socket.result.send(b'')
+                    socket.result.send(b'')
                     break
 
     class Actor(actor):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            setattr(self, PATH_FUNC, types.SimpleNamespace(ray=kwargs.get('ray', ray), host=ray.services.get_node_ip_address(), threads=[]))
+            setattr(self, PATH_FUNC, types.SimpleNamespace(ray=kwargs.get('ray', ray), threads=[]))
 
         def close(self):
             attr = getattr(self, PATH_FUNC)
@@ -104,13 +215,11 @@ def any(actor):
         def setup_rpc_any(self, **kwargs):
             attr = getattr(self, PATH_FUNC)
             if kwargs:
-                attr.serializer = util.Serializer(kwargs['serializer'])
-                connection = Connection(**kwargs)
-                thread = threading.Thread(target=functools.partial(run, self, connection))
+                thread = threading.Thread(target=run, args=(self,), kwargs=kwargs)
                 thread.start()
                 attr.threads.append(thread)
             else:
-                return attr.host
+                return ray.util.get_node_ip_address()
     return Actor
 
 
@@ -166,7 +275,7 @@ def gather(actor):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             assert not hasattr(self, PATH_FUNC)
-            setattr(self, PATH_FUNC, types.SimpleNamespace(ray=kwargs.get('ray', ray), host=ray.services.get_node_ip_address(), connections={}))
+            setattr(self, PATH_FUNC, types.SimpleNamespace(ray=kwargs.get('ray', ray), host=ray.util.get_node_ip_address(), connections={}))
 
         def close(self):
             attr = getattr(self, PATH_FUNC)
@@ -190,15 +299,9 @@ def gather(actor):
                     connection.thread.start()
             else:
                 assert addr not in attr.connections, addr
-                attr.serializer = util.Serializer(kwargs['serializer'])
+                attr.serializer = lamarckian.util.serialize.Serializer(kwargs['serializer'])
                 attr.connections[addr] = connection = types.SimpleNamespace()
-                if kwargs['backend'] == 'nnpy':
-                    connection.socket = socket = nnpy.Socket(nnpy.AF_SP, nnpy.REQ)
-                elif kwargs['backend'] == 'pynng':
-                    connection.socket = socket = pynng.Req0()
-                    socket.connect = socket.dial
-                else:
-                    connection.context = context = zmq.Context()
-                    connection.socket = socket = context.socket(zmq.REQ)
+                connection.context = context = zmq.Context()
+                connection.socket = socket = context.socket(zmq.REQ)
                 socket.connect(addr)
     return Actor

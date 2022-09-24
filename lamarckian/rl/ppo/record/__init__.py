@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,14 +20,14 @@ import torch
 import glom
 
 
-def get_ratio(self, outcome, tag):
+def get_ratio(self, outcome):
     try:
         clip = self.hparam['clip']
     except (AttributeError, KeyError):
         clip = glom.glom(self.kwargs['config'], 'rl.ppo.clip')
     ratio = outcome['ratio'].detach()
     return {
-        f'{tag}/ratio/min': ratio.min().item(),
-        f'{tag}/ratio/max': ratio.max().item(),
-        f'{tag}/ratio/clip': torch.logical_or(ratio < 1 - clip, ratio > 1 + clip).int().sum().item() / np.multiply.reduce(ratio.shape),
+        'ratio/min': ratio.min().item(),
+        'ratio/max': ratio.max().item(),
+        'ratio/clip': torch.logical_or(ratio < 1 - clip, ratio > 1 + clip).int().sum().item() / np.multiply.reduce(ratio.shape),
     }

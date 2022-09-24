@@ -1,4 +1,0 @@
-ec:
-  create:
-    ${__extend__}:
-      - lamarckian.ec.wrap.mdp.opponent.set_opponents_train

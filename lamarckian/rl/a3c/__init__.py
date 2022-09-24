@@ -1,5 +1,5 @@
 """
-Copyright (C) 2020
+Copyright (C) 2020, 申瑞珉 (Ruimin Shen)
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,72 +16,45 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-import types
 
-import numpy as np
-import torch
 import torch.nn.functional as F
 import glom
+import humanfriendly
 
 import lamarckian
-from .. import Remote, ac
+from .. import ac
+from . import wrap
 
 NAME = os.path.basename(os.path.dirname(__file__))
 
 
-class Actor(lamarckian.util.rpc.wrap.any(lamarckian.util.rpc.wrap.all(ac.Learner))):
-    def __init__(self, *args, **kwargs):
-        torch.set_num_threads(1)
-        super().__init__(*args, **kwargs)
-
-    def gradient(self, blob):
-        self.set_blob(blob)
-        cost = self.cost
-        self.optimizer.zero_grad()
-        outcome = self.backward()
-        outcome['gradient'] = [param.grad.cpu().numpy() for param in self.model.parameters()]
-        return self.cost - cost, outcome
+@lamarckian.util.rpc.wrap.all
+@lamarckian.util.rpc.wrap.any
+@wrap.actor
+class _Actor(ac.Learner):
+    pass
 
 
-class Learner(Remote):
+class Actor(_Actor):  # ray's bug
+    pass
+
+
+@wrap.learner
+class _Learner(lamarckian.rl.Learner):
     Actor = Actor
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.loss_critic = getattr(F, glom.glom(kwargs['config'], f'rl.ac.loss_critic', default='mse_loss'))
-        self.rpc_gradient = lamarckian.util.rpc.wrap.any_count(lamarckian.util.rpc.Any)(self.actors, **kwargs)
 
-    def close(self):
-        self.rpc_gradient.close()
-        return super().close()
 
-    def training(self):
-        training = super().training()
-        blob = self.get_blob()
-        for _ in range(len(self.actors)):
-            self.rpc_gradient.send('gradient', blob)
-
-        def close():
-            for _ in range(len(self.rpc_gradient)):
-                self.rpc_gradient.receive()
-            return training.close()
-        return types.SimpleNamespace(close=close)
-
-    def __call__(self):
-        cost, outcome = self.rpc_gradient.receive()
-        self.rpc_gradient.send('gradient', self.get_blob())
-        self.cost += cost
-        self.optimizer.zero_grad()
-        for param, grad in zip(self.model.parameters(), outcome['gradient']):
-            param.grad = torch.from_numpy(np.array(grad))
-        self.optimizer.step()
-        return outcome
+class Learner(_Learner):  # ray's bug
+    pass
 
 
 class Evaluator(Learner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        encoding = self.describe()['blob']
         self.recorder = lamarckian.util.recorder.Recorder.new(**kwargs)
         self.saver = lamarckian.evaluator.Saver(self)
         self.profiler = lamarckian.evaluator.record.Profiler(self.cost, len(self), **kwargs)
@@ -92,10 +65,6 @@ class Evaluator(Learner):
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
             lambda *args, **kwargs: self.profiler(self.cost),
-        )
-        self.recorder.register(
-            lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.scalar')),
-            lambda *args, **kwargs: lamarckian.util.record.Scalar(self.cost, **lamarckian.util.duration.stats),
         )
         self.recorder.register(
             lamarckian.rl.record.Rollout.counter(**kwargs),
@@ -111,20 +80,21 @@ class Evaluator(Learner):
                 **{f'{NAME}/loss': outcome['loss'].item()},
                 **{f'{NAME}/losses/{key}': loss.item() for key, loss in outcome['losses'].items()},
                 **{f'{NAME}/losses/critic': outcome['loss_critic'].sum().item()},
-                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(encoding['reward'], outcome['loss_critic'])},
+                **{f'{NAME}/losses/critic_{key}': loss.item() for key, loss in zip(self.encoding['blob']['reward'], outcome['loss_critic'])},
             }),
         )
         self.recorder.register(
             lamarckian.util.counter.Time(**glom.glom(kwargs['config'], 'record.model')),
-            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, self.get_blob()),
+            lambda outcome: lamarckian.rl.record.Model(f"{NAME}/model", self.cost, {key: value.cpu().numpy() for key, value in self.model.state_dict().items()}, glom.glom(kwargs['config'], 'record.model.sort', default='bytes')),
         )
         self.recorder.put(lamarckian.rl.record.Graph(f"{NAME}/graph", self.cost))
+        self.recorder.put(lamarckian.util.record.Text(self.cost, **{f"{NAME}/model_size": humanfriendly.format_size(sum(value.cpu().numpy().nbytes for value in self.model.state_dict().values()))}))
         self.recorder.put(lamarckian.util.record.Text(self.cost, topology=repr(self.rpc_all)))
 
     def close(self):
-        self.saver()
+        self.saver.close()
+        super().close()
         self.recorder.close()
-        return super().close()
 
     def training(self):
         self.results = lamarckian.rl.record.Results(**self.kwargs)
